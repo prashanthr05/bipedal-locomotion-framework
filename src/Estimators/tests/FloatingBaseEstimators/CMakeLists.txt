@@ -12,5 +12,9 @@ add_bipedal_test(
 add_bipedal_test(
  NAME InvariantEKFBaseEstimatorTest
  SOURCES InvariantEKFBaseEstimatorTest.cpp
- LINKS BipedalLocomotion::FloatingBaseEstimators BipedalLocomotion::ParametersHandler BipedalLocomotion::ManifConversions Eigen3::Eigen MANIF::manif)
+ LINKS BipedalLocomotion::FloatingBaseEstimators BipedalLocomotion::ParametersHandler BipedalLocomotion::ManifConversions Eigen3::Eigen iDynTree::idyntree-modelio-urdf MANIF::manif)
 
+ add_bipedal_test(
+ NAME FloatingBaseExtendedKinematicsLieGroupTest
+ SOURCES FloatingBaseExtendedKinematicsLieGroupTest.cpp
+ LINKS BipedalLocomotion::FloatingBaseEstimators Eigen3::Eigen MANIF::manif)
