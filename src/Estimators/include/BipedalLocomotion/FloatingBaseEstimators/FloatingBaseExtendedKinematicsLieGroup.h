@@ -161,6 +161,8 @@ namespace Estimators
         
         bool addSupportFramePose(const int& idx, const manif::SE3d& pose); /**< add pose of a new support frame, returns false without setting if frame already exists*/
         bool removeSupportFrame(const int& idx); /**< remove pose of an existing support frame, returns false otherwise*/
+        void clearSupportFrames();
+        bool frameExists(const int& idx);
  
         void setAugmentedVector(Eigen::Ref<const Eigen::VectorXd> augVec); /**< set augmented vector from the  group*/
 
@@ -229,7 +231,7 @@ namespace Estimators
         void setZero();
 
         Eigen::MatrixXd hat();
-        FloatingBaseExtendedKinematicsLieGroup exp();
+        FloatingBaseExtendedKinematicsLieGroup exp() const;
         Eigen::MatrixXd rjac();
         Eigen::MatrixXd rjacinv();
         Eigen::MatrixXd ljac();
@@ -265,6 +267,8 @@ namespace Estimators
         
         bool addSupportFrameTwist(const int& idx, const manif::SE3Tangentd& twist); /**< add twist of a new support frame, returns false without setting if frame already exists*/
         bool removeSupportFrameTwist(const int& idx); /**< remove twist of an existing support frame, returns false otherwise*/
+        void clearSupportFrames();
+        bool frameExists(const int& idx);
  
         void setAugmentedVector(Eigen::Ref<const Eigen::VectorXd> augVec); /**< set augmented vector from the group velocity*/
         

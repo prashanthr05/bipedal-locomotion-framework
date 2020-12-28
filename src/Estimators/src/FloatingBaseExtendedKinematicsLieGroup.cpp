@@ -322,6 +322,16 @@ bool FloatingBaseExtendedKinematicsLieGroup::removeSupportFrame(const int& idx)
     return true;
 }
 
+bool FloatingBaseExtendedKinematicsLieGroup::frameExists(const int& idx)
+{
+    return m_pimpl->checkValidSupportFrame(idx);
+}
+
+void FloatingBaseExtendedKinematicsLieGroup::clearSupportFrames()
+{
+    m_pimpl->clearSupportFrames();
+}
+
 manif::SE_2_3d FloatingBaseExtendedKinematicsLieGroup::baseExtendedPose() const
 {
     return m_pimpl->baseExtPose;
@@ -804,7 +814,7 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::hat()
     return m_pimpl->vHat;
 }
 
-FloatingBaseExtendedKinematicsLieGroup FloatingBaseExtendedKinematicsLieGroupTangent::exp()
+FloatingBaseExtendedKinematicsLieGroup FloatingBaseExtendedKinematicsLieGroupTangent::exp() const
 {
     auto XBase = m_pimpl->vBase.exp();
     std::map<int, manif::SE3d> XFeet;
@@ -1046,6 +1056,16 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::removeSupportFrameTwist(cons
                                         idx), 
                                         m_pimpl->fIndices.end());
     return true;
+}
+
+bool FloatingBaseExtendedKinematicsLieGroupTangent::frameExists(const int& idx)
+{
+    return m_pimpl->checkValidSupportFrame(idx);
+}
+
+void FloatingBaseExtendedKinematicsLieGroupTangent::clearSupportFrames()
+{
+    m_pimpl->clearSupportFrames();
 }
 
 manif::SE_2_3Tangentd FloatingBaseExtendedKinematicsLieGroupTangent::baseExtenedMotionVector() const

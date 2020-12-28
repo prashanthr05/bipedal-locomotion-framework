@@ -538,6 +538,18 @@ bool FloatingBaseEstimator::setupOptions(std::weak_ptr<BipedalLocomotion::Parame
             m_options.staticLandmarksUpdateEnabled = false;
         }
     }
+    else
+    {
+        if (!handle->getParameter("use_kinematics_measure", m_options.kinematicsUpdateEnabled))
+        {
+            m_options.kinematicsUpdateEnabled = true;
+        }
+
+        if (!handle->getParameter("use_static_ldmks_pose_measure", m_options.staticLandmarksUpdateEnabled))
+        {
+            m_options.staticLandmarksUpdateEnabled = false;
+        }
+    }
 
     std::vector<double> g;
     g.resize(3);

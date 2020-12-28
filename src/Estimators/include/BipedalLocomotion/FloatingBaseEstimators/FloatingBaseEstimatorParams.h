@@ -167,7 +167,6 @@ struct StateStdDev
     /**
     * @brief Prior deviation of IMU accelerometer bias in local frame
     *        expressed in m/s^2
-    *
     */
     Eigen::Vector3d accelerometerBias;
 
@@ -221,6 +220,17 @@ struct Options
     *
     */
     bool ekfUpdateEnabled{true};
+
+    /**
+     * @brief Enable/disable kinematics based correction updates
+     */
+    bool kinematicsUpdateEnabled{true};
+
+    /**
+     * @brief Enable/disable landmarks based correction updates
+     */
+    bool staticLandmarksUpdateEnabled{true};
+
 
     /**
      * @brief Enable/disable kinematics based correction updates
