@@ -153,20 +153,24 @@ public:
     Eigen::MatrixXd H; /**< Measurement model Jacobian */
     Eigen::MatrixXd N; /**< Measurement noise covariance matrix */
     Eigen::MatrixXd S; /**< innovation covariance*/
+    Eigen::MatrixXd Sinv; /**< inverse of innovation covariance*/
     Eigen::MatrixXd K; /**< Kalman gain*/
     Eigen::VectorXd deltaY; /**< innovation in vector space*/
     Eigen::VectorXd deltaX; /**< state update in vector space*/
     FloatingBaseExtendedKinematicsLieGroupTangent dX;
     Eigen::MatrixXd dXJr; /**<right Jacobian of Lie group at state correction as tangent */
     Eigen::MatrixXd IminusKH;
-
+    Eigen::MatrixXd Fnew; /**< required for adding or removing contacts */
+    Eigen::MatrixXd Qnew; /**< required for adding or removing contacts */
+    Eigen::Matrix<double, 6, 1> Qf; /**< required for adding or removing contacts */
+    Eigen::Matrix<double, 6, 1> supportFrameNoise; /**< required for adding or removing contacts */
     /**< for proper handling of contact frame index and 
      * landmark index within the same map, 
      * if landmark id = 1 and landmarkIDsOffset = 1000, 
      * in the LieGroup object support frame map,
      * it will be internally stored as 1001
      */
-    int landmarkIDsOffset{1000}; 
+    int landmarkIDsOffset{1000};
 };
 
 DILIGENT::DILIGENT() : m_pimpl(std::make_unique<Impl>())
@@ -299,12 +303,11 @@ bool DILIGENT::resetEstimator(const FloatingBaseEstimators::InternalState& newSt
 bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
                             const double& dt)
 {
-    auto dim = m_pimpl->dimensions(m_state, m_options.imuBiasEstimationEnabled);    
+    auto dim = m_pimpl->dimensions(m_state, m_options.imuBiasEstimationEnabled);
     m_pimpl->calcOmegak(m_state, meas, dt,
                         m_options.accelerationDueToGravity,
                         m_options.imuBiasEstimationEnabled,
                         m_pimpl->Omegak);
-
     m_pimpl->negOmegak = -m_pimpl->Omegak;
 
     // left parametrized velocity Jacobian
@@ -331,9 +334,9 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
     m_pimpl->Fk = m_pimpl->AdjNegativeOmegaLifted + (m_pimpl->Jr*m_pimpl->slantFk);
 
     // m_state is now predicted state after this function call
-    if (!m_pimpl->propagateStates(m_pimpl->Xk, 
-                                  m_pimpl->Omegak, 
-                                  m_options.imuBiasEstimationEnabled, 
+    if (!m_pimpl->propagateStates(m_pimpl->Xk,
+                                  m_pimpl->Omegak,
+                                  m_options.imuBiasEstimationEnabled,
                                   m_state))
     {
         std::cerr << "[DILIGENT::predictState] unable to propagate state mean." << std::endl;
@@ -346,13 +349,13 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
         return false;
     }
 
-    m_pimpl->m_P = m_pimpl->Fk*m_pimpl->m_P*(m_pimpl->Fk.transpose()) + 
+    m_pimpl->m_P = m_pimpl->Fk*m_pimpl->m_P*(m_pimpl->Fk.transpose()) +
                    m_pimpl->Jr*(m_pimpl->Qk*dt)*(m_pimpl->Jr.transpose());
 
-    if (m_pimpl->extractStateVar(m_pimpl->m_P,
-                                 m_pimpl->Xk,
-                                 m_options.imuBiasEstimationEnabled,
-                                 m_stateStdDev))// unwrap state covariance matrix diagonal
+    if (!m_pimpl->extractStateVar(m_pimpl->m_P,
+                                  m_pimpl->Xk,
+                                  m_options.imuBiasEstimationEnabled,
+                                  m_stateStdDev))// unwrap state covariance matrix diagonal
     {
         std::cerr << "[DILIGENT::predictState] unable to extract from predicted state covariance matrix." << std::endl;
         return false;
@@ -514,10 +517,10 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
             return false;
         }
 
-        if (m_pimpl->extractStateVar(m_pimpl->m_P,
-                                     m_pimpl->Xk,
-                                     m_options.imuBiasEstimationEnabled,
-                                     m_stateStdDev))// unwrap state covariance matrix diagonal
+        if (!m_pimpl->extractStateVar(m_pimpl->m_P,
+                                      m_pimpl->Xk,
+                                      m_options.imuBiasEstimationEnabled,
+                                      m_stateStdDev))// unwrap state covariance matrix diagonal
         {
             std::cerr << "[DILIGENT::updateKinematics] unable to extract from predicted state covariance matrix." << std::endl;
             return false;
@@ -565,6 +568,9 @@ bool DILIGENT::updateLandmarkRelativePoses(FloatingBaseEstimators::Measurements&
             }
         }
     }
+
+    // update the underlying matrix Lie group from the state
+    m_pimpl->constructStateLieGroup(m_state, m_options.imuBiasEstimationEnabled, m_pimpl->Xk);
 
     // construct stack sub H and sub deltaY
     // construct blkdiag of sub N
@@ -632,10 +638,10 @@ bool DILIGENT::updateLandmarkRelativePoses(FloatingBaseEstimators::Measurements&
             return false;
         }
 
-        if (m_pimpl->extractStateVar(m_pimpl->m_P,
-                                     m_pimpl->Xk,
-                                     m_options.imuBiasEstimationEnabled,
-                                     m_stateStdDev))// unwrap state covariance matrix diagonal
+        if (!m_pimpl->extractStateVar(m_pimpl->m_P,
+                                      m_pimpl->Xk,
+                                      m_options.imuBiasEstimationEnabled,
+                                      m_stateStdDev))// unwrap state covariance matrix diagonal
         {
             std::cerr << "[DILIGENT::updateLandmarkRelativePoses] unable to extract from predicted state covariance matrix." << std::endl;
             return false;
@@ -704,7 +710,8 @@ bool DILIGENT::Impl::updateStates(const Eigen::VectorXd& deltaY,
 
     PHT = P*Hk.transpose();
     S = Hk*PHT + Nk;
-    K = PHT*(S.inverse());
+    Sinv = S.inverse();
+    K = PHT*(Sinv);
     deltaX = K*deltaY;
 
     if (!vec2Tangent(deltaX, Xk.supportFrameIndices(), estimateBias, dX))
@@ -738,7 +745,7 @@ bool DILIGENT::Impl::extractStateVar(const Eigen::MatrixXd& P,
     stateStdDev.imuLinearVelocity =  P.block<3, 3>(imuLinearVelOffset, imuLinearVelOffset).diagonal().array().sqrt();
 
     std::size_t dimBias;
-    estimateBias ? dimBias = 0 : dimBias = 6;
+    estimateBias ? dimBias = 6 : dimBias = 0;
     auto dimSupport = P.cols() - dimBias - extMotionDim;
 
     auto supportFrameIds = Xk.supportFrameIndices();
@@ -938,7 +945,7 @@ void DILIGENT::Impl::calcSlantFk(const FloatingBaseEstimators::InternalState& st
     slantFk.resize(dim, dim);
     slantFk.setZero();
 
-    Eigen::Matrix3d RT = state.imuOrientation.toRotationMatrix();
+    Eigen::Matrix3d RT = state.imuOrientation.toRotationMatrix().transpose();
     const Eigen::Vector3d& v = state.imuLinearVelocity;
 
     Eigen::Vector3d a = RT*v*dt + RT*g*0.5*dt*dt;
@@ -1061,13 +1068,27 @@ void DILIGENT::Impl::calcOmegak(const FloatingBaseEstimators::InternalState& X,
     // positive ids for contacts
     for (auto& iter : X.supportFrameData)
     {
-        Omegak.addSupportFrameTwist(iter.first, zeroTwist);
+        if (!Omegak.frameExists(iter.first))
+        {
+            Omegak.addSupportFrameTwist(iter.first, zeroTwist);
+        }
+        else
+        {
+            Omegak.setSupportFrameTwist(iter.first, zeroTwist);
+        }
     }
 
     // offset ids for landmarks - expected landmarkData map to maintain only positive ids
     for (auto& iter : X.landmarkData)
     {
-        Omegak.addSupportFrameTwist(landmarkIDsOffset + iter.first, zeroTwist);
+        if (!Omegak.frameExists(landmarkIDsOffset + iter.first))
+        {
+            Omegak.addSupportFrameTwist(landmarkIDsOffset + iter.first, zeroTwist);
+        }
+        else
+        {
+            Omegak.setSupportFrameTwist(landmarkIDsOffset + iter.first, zeroTwist);
+        }
     }
 
     if (estimateBias)
@@ -1091,7 +1112,7 @@ bool DILIGENT::Impl::vec2Tangent(const Eigen::VectorXd& v,
     }
 
     std::size_t dimBias;
-    estimateBias ? dimBias = 0 : dimBias = 6;
+    estimateBias ? dimBias = 6 : dimBias = 0;
     auto dimSupport = vecSize - dimBias - extMotionDim;
 
     if ( ((vecSize - extMotionDim) % 6) != 0 || dimSupport / 6 != ids.size())
@@ -1106,7 +1127,14 @@ bool DILIGENT::Impl::vec2Tangent(const Eigen::VectorXd& v,
     for (auto& id : ids)
     {
         int q = extMotionDim + (motionDim*idx);
-        tangent.addSupportFrameTwist(id, v.segment<6>(q));
+        if (!tangent.frameExists(id))
+        {
+            tangent.addSupportFrameTwist(id, v.segment<6>(q));
+        }
+        else
+        {
+            tangent.setSupportFrameTwist(id, v.segment<6>(q));
+        }
         idx++;
     }
 
@@ -1128,14 +1156,14 @@ bool DILIGENT::Impl::addContactOrLandmark(const int& idx,
                                           FloatingBaseEstimators::InternalState& state,
                                           Eigen::MatrixXd& P)
 {
-    Eigen::Matrix<double, 6, 1> Qf;
-    Eigen::Matrix<double, 6, 1> supportFrameNoise;
     int oldCols = P.cols();
     int newRows = P.rows() + motionDim;
     int newCols = P.cols() + motionDim;
-    Eigen::MatrixXd Fnew = Eigen::MatrixXd::Zero(newRows, oldCols);
+    Fnew.resize(newRows, oldCols);
+    Fnew.setZero();
     Fnew.topLeftCorner(extMotionDim, extMotionDim).setIdentity();
-    Eigen::MatrixXd Qnew = Eigen::MatrixXd::Zero(newRows, newCols);
+    Qnew.resize(newRows, newCols);
+    Qnew.setZero();
     if (idx < landmarkIDsOffset)
     {
         // add contact
@@ -1192,7 +1220,7 @@ bool DILIGENT::Impl::addContactOrLandmark(const int& idx,
     else
     {
         // add landmark
-        int ldmkIdx = landmarkIDsOffset - idx;
+        int ldmkIdx = idx - landmarkIDsOffset;
         if (state.landmarkData.find(ldmkIdx) != state.landmarkData.end())
         {
             std::cerr << "[DILIGENT::addContactOrLandmark] landmark already exists" << std::endl;
@@ -1231,7 +1259,7 @@ bool DILIGENT::Impl::addContactOrLandmark(const int& idx,
             }
             if (iter.first > ldmkIdx)
             {
-                Fnew.block<6, 6>(q+motionDim, q).setIdentity();
+                Fnew.block<6, 6>(q, q-motionDim).setIdentity();
             }
             j++;
         }
@@ -1241,6 +1269,7 @@ bool DILIGENT::Impl::addContactOrLandmark(const int& idx,
     {
         Fnew.bottomRightCorner<6, 6>().setIdentity();
     }
+
     // update covariance
     P = Fnew * P * Fnew.transpose() + Qnew;
 
@@ -1255,7 +1284,8 @@ bool DILIGENT::Impl::removeContactOrLandmark(const int& idx,
     int oldCols = P.cols();
     int newRows = P.rows() - motionDim;
 
-    Eigen::MatrixXd Fnew = Eigen::MatrixXd::Zero(newRows, oldCols);
+    Fnew.resize(newRows, oldCols);
+    Fnew.setZero();
     Fnew.topLeftCorner(extMotionDim, extMotionDim).setIdentity();
 
     if (idx < landmarkIDsOffset)
@@ -1294,7 +1324,7 @@ bool DILIGENT::Impl::removeContactOrLandmark(const int& idx,
     else
     {
         // remove landmark
-        int ldmkIdx = landmarkIDsOffset - idx;
+        int ldmkIdx = idx - landmarkIDsOffset;
         if (state.landmarkData.find(ldmkIdx) == state.landmarkData.end())
         {
             std::cerr << "[DILIGENT::removeContactOrLandmark] landmark does not exist" << std::endl;

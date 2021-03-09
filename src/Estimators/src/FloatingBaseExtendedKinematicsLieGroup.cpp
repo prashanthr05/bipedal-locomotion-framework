@@ -15,37 +15,37 @@ class FloatingBaseExtendedKinematicsLieGroup::Impl
 {
 public:
     manif::SE_2_3d baseExtPose; /**< Internal state base extended pose*/
-    
+
     std::map<int, manif::SE3d> supportFramePose; /**< Internal state support frame pose*/
     std::vector<int> supportFrameIndices; /**< Internal suport frame indices */
-    
+
     Eigen::VectorXd augmentedVector; /**< Internal state augmented vector*/
     bool isAugmentedVectorUsed{false}; /**< Internal flag to check activation of augmented vector states*/
-    
+
     Eigen::MatrixXd X;    /**< Matrix Lie group*/
     Eigen::MatrixXd AdjX; /**< Adjoint matrix representation of the group*/
-    
+
     const std::size_t extPoseSize{5};
     const std::size_t extPoseDim{9};
-    
+
     const std::size_t poseSize{4};
     const std::size_t poseDim{6};
-    
+
     bool checkValidSupportFrame(const int& idx)
     {
         if (supportFramePose.find(idx) == supportFramePose.end())
-        {            
+        {
             return false;
-        }        
+        }
         return true;
     }
-    
+
     void clearSupportFrames()
     {
         supportFramePose.clear();
         supportFrameIndices.clear();
     }
-    
+
     FloatingBaseExtendedKinematicsLieGroup compose(const FloatingBaseExtendedKinematicsLieGroup& other, std::string& leftOrRight)
     {
         auto indices = other.supportFrameIndices();
@@ -59,25 +59,25 @@ public:
                 other.supportFramePose(idx, otherPose);
                 if (leftOrRight == "left")
                 {
-                    supportFrameComposition[idx] = supportFramePose.at(idx)*otherPose;            
+                    supportFrameComposition[idx] = supportFramePose.at(idx)*otherPose;
                 }
                 else if (leftOrRight == "right")
                 {
                     supportFrameComposition[idx] = otherPose*supportFramePose.at(idx);
                 }
-            }        
+            }
         }
-        
+
         manif::SE_2_3d baseExtPosCompose;
         if (leftOrRight == "left")
         {
-            baseExtPosCompose = baseExtPose*other.baseExtendedPose();            
+            baseExtPosCompose = baseExtPose*other.baseExtendedPose();
         }
         else if (leftOrRight == "right")
         {
             baseExtPosCompose = other.baseExtendedPose()*baseExtPose;
         }
-        
+
         if (other.isAugmentedVectorUsed() && isAugmentedVectorUsed)
         {
             Eigen::VectorXd otherAug;
@@ -86,10 +86,10 @@ public:
                                                           supportFrameComposition,
                                                           augmentedVector + otherAug);
         }
-    
+
         return FloatingBaseExtendedKinematicsLieGroup(baseExtPosCompose,
-                                                      supportFrameComposition);        
-    }        
+                                                      supportFrameComposition);
+    }
 };
 
 FloatingBaseExtendedKinematicsLieGroup::~FloatingBaseExtendedKinematicsLieGroup()
@@ -121,59 +121,59 @@ FloatingBaseExtendedKinematicsLieGroup::FloatingBaseExtendedKinematicsLieGroup(c
 }
 
 FloatingBaseExtendedKinematicsLieGroup::FloatingBaseExtendedKinematicsLieGroup(const manif::SE_2_3d& baseExtPose,
-                                                                               const std::map<int, manif::SE3d>& supportFramesPose)  
+                                                                               const std::map<int, manif::SE3d>& supportFramesPose)
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->baseExtPose = baseExtPose;
-    
+
     m_pimpl->clearSupportFrames();
-    m_pimpl->supportFramePose = supportFramesPose;    
+    m_pimpl->supportFramePose = supportFramesPose;
     for (auto& supportFrame : m_pimpl->supportFramePose)
     {
         m_pimpl->supportFrameIndices.emplace_back(supportFrame.first);
     }
-    
+
     m_pimpl->isAugmentedVectorUsed = false;
 }
 
 FloatingBaseExtendedKinematicsLieGroup::FloatingBaseExtendedKinematicsLieGroup(const manif::SE_2_3d& baseExtPose,
                                                                                const std::map<int, manif::SE3d>& supportFramesPose,
-                                                                               Eigen::Ref<const Eigen::VectorXd> augmentedVector)  
+                                                                               Eigen::Ref<const Eigen::VectorXd> augmentedVector)
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->baseExtPose = baseExtPose;
-    
+
     m_pimpl->clearSupportFrames();
     m_pimpl->supportFramePose = supportFramesPose;    
     for (auto& supportFrame : m_pimpl->supportFramePose)
     {
         m_pimpl->supportFrameIndices.emplace_back(supportFrame.first);
     }
-    
+
     m_pimpl->isAugmentedVectorUsed = true;
     m_pimpl->augmentedVector = augmentedVector;
 }
 
 Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroup::asMatrixLieGroup() const
-{       
-    std::size_t size; 
-    size = m_pimpl->extPoseSize + 
+{
+    std::size_t size;
+    size = m_pimpl->extPoseSize +
         (m_pimpl->poseSize * nrOfSupportFrames());
-        
+
     if (m_pimpl->isAugmentedVectorUsed)
     {
         size += (m_pimpl->augmentedVector.size() + 1);
     }
-    
+
     m_pimpl->X.resize(size, size);
     m_pimpl->X.setIdentity();
     m_pimpl->X.topLeftCorner<5, 5>() = m_pimpl->baseExtPose.isometry();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->supportFramePose)
     {
         int q = m_pimpl->extPoseSize + (m_pimpl->poseSize*idx);
-        m_pimpl->X.block<4, 4>(q, q)= iter.second.transform();  
+        m_pimpl->X.block<4, 4>(q, q)= iter.second.transform();
         idx++;
     }
 
@@ -189,21 +189,32 @@ FloatingBaseExtendedKinematicsLieGroup::FloatingBaseExtendedKinematicsLieGroup(c
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->baseExtPose = other.baseExtendedPose();
-      
+
     m_pimpl->isAugmentedVectorUsed = other.isAugmentedVectorUsed();
     if (m_pimpl->isAugmentedVectorUsed)
     {
         other.augmentedVector(m_pimpl->augmentedVector);
     }
-    
+
     m_pimpl->supportFramePose = other.supportFramesPose();
     m_pimpl->supportFrameIndices = other.supportFrameIndices();
 
 }
 
-FloatingBaseExtendedKinematicsLieGroup FloatingBaseExtendedKinematicsLieGroup::operator=(const FloatingBaseExtendedKinematicsLieGroup& other)
+FloatingBaseExtendedKinematicsLieGroup& FloatingBaseExtendedKinematicsLieGroup::operator=(const FloatingBaseExtendedKinematicsLieGroup& other)
 {
-    return FloatingBaseExtendedKinematicsLieGroup(other);    
+    if (this == &other) return *this;
+    this->m_pimpl->baseExtPose = other.baseExtendedPose();
+
+    this->m_pimpl->isAugmentedVectorUsed = other.isAugmentedVectorUsed();
+    if (this->m_pimpl->isAugmentedVectorUsed)
+    {
+        other.augmentedVector(this->m_pimpl->augmentedVector);
+    }
+
+    this->m_pimpl->supportFramePose = other.supportFramesPose();
+    this->m_pimpl->supportFrameIndices = other.supportFrameIndices();
+    return *this;
 }
 
 void FloatingBaseExtendedKinematicsLieGroup::setBaseExtendedPose(const manif::SE_2_3d& baseExtenedPose)
@@ -241,7 +252,7 @@ void FloatingBaseExtendedKinematicsLieGroup::setBaseLinearVelocity(Eigen::Ref<co
 
 void FloatingBaseExtendedKinematicsLieGroup::disableAugmentedVector()
 {
-    m_pimpl->isAugmentedVectorUsed = false;    
+    m_pimpl->isAugmentedVectorUsed = false;
 }
 
 void FloatingBaseExtendedKinematicsLieGroup::setAugmentedVector(Eigen::Ref<const Eigen::VectorXd> augVec)
@@ -258,7 +269,7 @@ bool FloatingBaseExtendedKinematicsLieGroup::setSupportFramePose(const int& idx,
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the group representation" << std::endl;
         return false;
     }
-    
+
     m_pimpl->supportFramePose.at(idx) = pose;
     return true;
 }
@@ -292,7 +303,7 @@ bool FloatingBaseExtendedKinematicsLieGroup::setSupportFrameRotation(const int& 
 bool FloatingBaseExtendedKinematicsLieGroup::addSupportFramePose(const int& idx, const manif::SE3d& pose)
 {
     std::string printPrefix{"[FloatingBaseExtendedKinematicsLieGroup::addSupportFramePose] "};
-    
+
     if (m_pimpl->supportFramePose.find(idx) == m_pimpl->supportFramePose.end())
     {
         m_pimpl->supportFramePose[idx] = pose;
@@ -300,7 +311,7 @@ bool FloatingBaseExtendedKinematicsLieGroup::addSupportFramePose(const int& idx,
         std::sort(m_pimpl->supportFrameIndices.begin(), m_pimpl->supportFrameIndices.end());
         return true;
     }
-    
+
     std::cerr << printPrefix << "Frame already exists. use set method to change the frame pose." << std::endl;
     return false;
 }
@@ -313,11 +324,11 @@ bool FloatingBaseExtendedKinematicsLieGroup::removeSupportFrame(const int& idx)
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the group representation" << std::endl;
         return false;
     }
-    
+
     m_pimpl->supportFramePose.erase(idx);
-    m_pimpl->supportFrameIndices.erase(std::remove(m_pimpl->supportFrameIndices.begin(), 
-                                                   m_pimpl->supportFrameIndices.end(), 
-                                                   idx), 
+    m_pimpl->supportFrameIndices.erase(std::remove(m_pimpl->supportFrameIndices.begin(),
+                                                   m_pimpl->supportFrameIndices.end(),
+                                                   idx),
                                        m_pimpl->supportFrameIndices.end());
     return true;
 }
@@ -375,7 +386,7 @@ bool FloatingBaseExtendedKinematicsLieGroup::augmentedVector(Eigen::VectorXd& au
         std::cerr << printPrefix << "Augmented vector not available in the group representation" << std::endl;
         return false;
     }
-    
+
     augVec = m_pimpl->augmentedVector;
     return true;
 }
@@ -398,9 +409,9 @@ bool FloatingBaseExtendedKinematicsLieGroup::supportFramePose(const int& idx, ma
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the group representation" << std::endl;
         return false;
     }
-    
+
     pose = m_pimpl->supportFramePose.at(idx);
-        
+
     return true;
 }
 
@@ -410,7 +421,7 @@ std::map<int, manif::SE3d> FloatingBaseExtendedKinematicsLieGroup::supportFrames
 }
 
 
-bool FloatingBaseExtendedKinematicsLieGroup::supportFramePosition(const int& idx, Eigen::Ref<Eigen::Vector3d> position) const 
+bool FloatingBaseExtendedKinematicsLieGroup::supportFramePosition(const int& idx, Eigen::Ref<Eigen::Vector3d> position) const
 {
     std::string printPrefix{"[FloatingBaseExtendedKinematicsLieGroup::supportFrameRotation] "};
     if (!m_pimpl->checkValidSupportFrame(idx))
@@ -418,26 +429,26 @@ bool FloatingBaseExtendedKinematicsLieGroup::supportFramePosition(const int& idx
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the group representation" << std::endl;
         return false;
     }
-    
+
     position = m_pimpl->supportFramePose.at(idx).translation();
-    return true;    
+    return true;
 }
 
-bool FloatingBaseExtendedKinematicsLieGroup::supportFrameRotation(const int& idx, manif::SO3d& rotation) const 
+bool FloatingBaseExtendedKinematicsLieGroup::supportFrameRotation(const int& idx, manif::SO3d& rotation) const
 {
     std::string printPrefix{"[FloatingBaseExtendedKinematicsLieGroup::supportFrameRotation] "};
     if (!m_pimpl->checkValidSupportFrame(idx))
-    {       
+    {
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the group representation" << std::endl;
         return false;
     }
-    
+
     rotation = m_pimpl->supportFramePose.at(idx).asSO3();
-    return true;    
+    return true;
 }
 
 Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroup::adj()
-{    
+{
     int size = m_pimpl->extPoseDim + (m_pimpl->poseDim*nrOfSupportFrames());
     if (m_pimpl->isAugmentedVectorUsed)
     {
@@ -445,17 +456,17 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroup::adj()
     }
     m_pimpl->AdjX.resize(size, size);
     m_pimpl->AdjX.setIdentity();
-    
+
     m_pimpl->AdjX.topLeftCorner<9, 9>() = m_pimpl->baseExtPose.adj();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->supportFramePose)
     {
         int q = m_pimpl->extPoseDim + (m_pimpl->poseDim*idx);
-        m_pimpl->X.block<6, 6>(q, q) = iter.second.adj();  
+        m_pimpl->AdjX.block<6, 6>(q, q) = iter.second.adj();
         idx++;
     }
-    
+
     // bias related Adjoint is identity
 
     return m_pimpl->AdjX;
@@ -476,20 +487,20 @@ void FloatingBaseExtendedKinematicsLieGroup::setIdentity()
 }
 
 FloatingBaseExtendedKinematicsLieGroup FloatingBaseExtendedKinematicsLieGroup::inverse()
-{        
+{
     std::map<int, manif::SE3d> invSupportPose;
     for (auto& iter : m_pimpl->supportFramePose)
     {
         invSupportPose[iter.first] = iter.second.inverse();
     }
-    
+
     if (m_pimpl->isAugmentedVectorUsed)
     {
         return FloatingBaseExtendedKinematicsLieGroup(m_pimpl->baseExtPose.inverse(),
                                                       invSupportPose,
                                                      -m_pimpl->augmentedVector);
     }
-    
+
     return FloatingBaseExtendedKinematicsLieGroup(m_pimpl->baseExtPose.inverse(),
                                                   invSupportPose);
 }
@@ -535,13 +546,13 @@ class FloatingBaseExtendedKinematicsLieGroupTangent::Impl
 {
 public:
     manif::SE_2_3Tangentd vBase; /**< Internal base extended motion vector*/
-    
+
     std::map<int, manif::SE3Tangentd> vF; /**< Internal state support frame twists*/
     std::vector<int> fIndices; /**< Internal suport frame indices */
 
     Eigen::VectorXd vAugmented; /**< Internal augmented vector */
     bool isAugmentedVectorUsed{false}; /**< Internal flag to check activation of augmented vector*/
-    
+
     Eigen::MatrixXd vHat;      /**< Matrix Lie algebra */
     Eigen::MatrixXd Jl;        /**< Left Jacobian of group*/
     Eigen::MatrixXd Jlinv;     /**< Left Jacobian inverse of group */
@@ -552,22 +563,22 @@ public:
     const std::size_t poseSize{4};
     const std::size_t extMotionDim{9};
     const std::size_t twistDim{6};  
-    
+
     bool checkValidSupportFrame(const int& idx)
     {
         if (vF.find(idx) == vF.end())
-        {            
+        {
             return false;
-        }        
+        }
         return true;
     }
-    
+
     void clearSupportFrames()
     {
         vF.clear();
         fIndices.clear();
     }
-    
+
     FloatingBaseExtendedKinematicsLieGroupTangent operation(const FloatingBaseExtendedKinematicsLieGroupTangent& other, std::string& plusOrMinus)
     {
         manif::SE_2_3Tangentd vB;
@@ -580,7 +591,7 @@ public:
         {
             vB = vBase - other.baseExtenedMotionVector();
         }
-        
+
         std::map<int, manif::SE3Tangentd> outTwist;
         for (auto idx : indices)
         {
@@ -595,7 +606,7 @@ public:
                 else if (plusOrMinus == "minus")
                 {
                     outTwist[idx] = vF.at(idx) - otherTwist;
-                }                
+                }
             }
         }
 
@@ -617,7 +628,7 @@ public:
         }
         return FloatingBaseExtendedKinematicsLieGroupTangent(vB,
                                                              outTwist);
-    }        
+    }
 };
 
 FloatingBaseExtendedKinematicsLieGroupTangent::~FloatingBaseExtendedKinematicsLieGroupTangent()
@@ -650,35 +661,35 @@ FloatingBaseExtendedKinematicsLieGroupTangent::FloatingBaseExtendedKinematicsLie
 }
 
 FloatingBaseExtendedKinematicsLieGroupTangent::FloatingBaseExtendedKinematicsLieGroupTangent(const manif::SE_2_3Tangentd& baseExtMotionVec,
-                                                                                             const std::map<int, manif::SE3Tangentd>& supportFramesTwist)  
+                                                                                             const std::map<int, manif::SE3Tangentd>& supportFramesTwist)
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->vBase = baseExtMotionVec;
-    
+
     m_pimpl->clearSupportFrames();
-    m_pimpl->vF = supportFramesTwist;    
+    m_pimpl->vF = supportFramesTwist;
     for (auto& supportFrame : m_pimpl->vF)
     {
         m_pimpl->fIndices.emplace_back(supportFrame.first);
     }
-    
+
     m_pimpl->isAugmentedVectorUsed = false;
 }
 
 FloatingBaseExtendedKinematicsLieGroupTangent::FloatingBaseExtendedKinematicsLieGroupTangent(const manif::SE_2_3Tangentd& baseExtMotionVec,
                                                                                              const std::map<int, manif::SE3Tangentd>& supportFramesTwist,
-                                                                                             Eigen::Ref<const Eigen::VectorXd> augmentedVector)  
+                                                                                             Eigen::Ref<const Eigen::VectorXd> augmentedVector)
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->vBase = baseExtMotionVec;
-    
+
     m_pimpl->clearSupportFrames();
-    m_pimpl->vF = supportFramesTwist;    
+    m_pimpl->vF = supportFramesTwist;
     for (auto& supportFrame : m_pimpl->vF)
     {
         m_pimpl->fIndices.emplace_back(supportFrame.first);
     }
-    
+
     m_pimpl->isAugmentedVectorUsed = true;
     m_pimpl->vAugmented = augmentedVector;
 }
@@ -687,20 +698,30 @@ FloatingBaseExtendedKinematicsLieGroupTangent::FloatingBaseExtendedKinematicsLie
 : m_pimpl(std::make_unique<Impl>())
 {
     m_pimpl->vBase = other.baseExtenedMotionVector();
-     
+
     m_pimpl->isAugmentedVectorUsed = other.isAugmentedVectorUsed();
     if (m_pimpl->isAugmentedVectorUsed)
     {
         other.augmentedVector(m_pimpl->vAugmented);
     }
-    
+
     m_pimpl->vF = other.supportFramesTwist();
     m_pimpl->fIndices = other.supportFrameIndices();
 }
 
-FloatingBaseExtendedKinematicsLieGroupTangent FloatingBaseExtendedKinematicsLieGroupTangent::operator=(const FloatingBaseExtendedKinematicsLieGroupTangent& other)
+FloatingBaseExtendedKinematicsLieGroupTangent& FloatingBaseExtendedKinematicsLieGroupTangent::operator=(const FloatingBaseExtendedKinematicsLieGroupTangent& other)
 {
-    return FloatingBaseExtendedKinematicsLieGroupTangent(other);    
+    if (this == &other) return *this;
+    this->m_pimpl->vBase = other.baseExtenedMotionVector();
+    m_pimpl->isAugmentedVectorUsed = other.isAugmentedVectorUsed();
+    if (this->m_pimpl->isAugmentedVectorUsed)
+    {
+        other.augmentedVector(this->m_pimpl->vAugmented);
+    }
+
+    this->m_pimpl->vF = other.supportFramesTwist();
+    this->m_pimpl->fIndices = other.supportFrameIndices();
+    return *this;
 }
 
 std::size_t FloatingBaseExtendedKinematicsLieGroupTangent::size() const
@@ -708,7 +729,7 @@ std::size_t FloatingBaseExtendedKinematicsLieGroupTangent::size() const
     std::size_t _size{0}; 
     _size = m_pimpl->extMotionDim + 
         (m_pimpl->twistDim * nrOfSupportFrames());
-        
+
     if (m_pimpl->isAugmentedVectorUsed)
     {
         _size += m_pimpl->vAugmented.size();
@@ -720,18 +741,18 @@ Eigen::VectorXd FloatingBaseExtendedKinematicsLieGroupTangent::toVector()
 {
     Eigen::VectorXd v;
     v.resize(size());
-    
+
     v.head<9>() = m_pimpl->vBase.coeffs();
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        v.segment<6>(q)= iter.second.coeffs();  
+        v.segment<6>(q)= iter.second.coeffs();
         idx++;
-    } 
-        
+    }
+
     if (m_pimpl->isAugmentedVectorUsed)
-    {        
+    {
         v.tail(m_pimpl->vAugmented.size()) = m_pimpl->vAugmented;
     }
 
@@ -745,7 +766,7 @@ FloatingBaseExtendedKinematicsLieGroupTangent FloatingBaseExtendedKinematicsLieG
     {
         invTwist[idx] = -v;
     }
-    
+
     if (m_pimpl->isAugmentedVectorUsed)
     {
         return FloatingBaseExtendedKinematicsLieGroupTangent(-m_pimpl->vBase,
@@ -787,7 +808,7 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::hat()
 {
     auto matSize = m_pimpl->extPoseSize + 
                             (m_pimpl->poseSize * nrOfSupportFrames());
-        
+
     if (m_pimpl->isAugmentedVectorUsed)
     {
         if (m_pimpl->vAugmented.size() > 0)
@@ -795,16 +816,16 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::hat()
             matSize += (m_pimpl->vAugmented.size() + 1);
         }
     }
-    
+
     m_pimpl->vHat.resize(matSize, matSize);
     m_pimpl->vHat.setZero();
     m_pimpl->vHat.topLeftCorner<5, 5>() = m_pimpl->vBase.hat();
-    
+
     int idx{0};
     for (auto& iter : m_pimpl->vF)
     {
         int q = static_cast<int>(m_pimpl->extPoseSize) + (static_cast<int>(m_pimpl->poseSize)*idx);
-        m_pimpl->vHat.block<4, 4>(q, q)= iter.second.hat();  
+        m_pimpl->vHat.block<4, 4>(q, q)= iter.second.hat();
         idx++;
     }
 
@@ -842,19 +863,19 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::ljac()
 
     m_pimpl->Jl.resize(dim, dim);
     m_pimpl->Jl.setIdentity();
-    
+
     m_pimpl->Jl.topLeftCorner<9, 9>() = m_pimpl->vBase.ljac();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        m_pimpl->Jl.block<6, 6>(q, q) = iter.second.ljac();  
+        m_pimpl->Jl.block<6, 6>(q, q) = iter.second.ljac();
         idx++;
     }
-    
+
     // bias related Jacobian is identity
-    return m_pimpl->Jl;    
+    return m_pimpl->Jl;
 }
 
 Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::ljacinv()
@@ -863,19 +884,19 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::ljacinv()
 
     m_pimpl->Jlinv.resize(dim, dim);
     m_pimpl->Jlinv.setIdentity();
-    
+
     m_pimpl->Jlinv.topLeftCorner<9, 9>() = m_pimpl->vBase.ljacinv();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        m_pimpl->Jlinv.block<6, 6>(q, q) = iter.second.ljacinv();  
+        m_pimpl->Jlinv.block<6, 6>(q, q) = iter.second.ljacinv();
         idx++;
     }
-    
+
     // bias related Jacobian inverse is identity
-    return m_pimpl->Jlinv;   
+    return m_pimpl->Jlinv;
 }
 
 Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::rjac()
@@ -884,19 +905,19 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::rjac()
 
     m_pimpl->Jr.resize(dim, dim);
     m_pimpl->Jr.setIdentity();
-    
+
     m_pimpl->Jr.topLeftCorner<9, 9>() = m_pimpl->vBase.rjac();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        m_pimpl->Jr.block<6, 6>(q, q) = iter.second.rjac();  
+        m_pimpl->Jr.block<6, 6>(q, q) = iter.second.rjac();
         idx++;
     }
-    
+
     // bias related Jacobian is identity
-    return m_pimpl->Jr; 
+    return m_pimpl->Jr;
 }
 
 Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::rjacinv()
@@ -905,17 +926,17 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::rjacinv()
 
     m_pimpl->Jrinv.resize(dim, dim);
     m_pimpl->Jrinv.setIdentity();
-    
+
     m_pimpl->Jrinv.topLeftCorner<9, 9>() = m_pimpl->vBase.rjacinv();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        m_pimpl->Jrinv.block<6, 6>(q, q) = iter.second.rjacinv();  
+        m_pimpl->Jrinv.block<6, 6>(q, q) = iter.second.rjacinv();
         idx++;
     }
-    
+
     // bias related Jacobian inverse is identity
     return m_pimpl->Jrinv; 
 }
@@ -926,17 +947,17 @@ Eigen::MatrixXd FloatingBaseExtendedKinematicsLieGroupTangent::smallAdj()
 
     m_pimpl->smallAdj.resize(dim, dim);
     m_pimpl->smallAdj.setZero();
-    
+
     m_pimpl->smallAdj.topLeftCorner<9, 9>() = m_pimpl->vBase.smallAdj();
-    
+
     int idx = 0;
     for (auto& iter : m_pimpl->vF)
     {
         int q = m_pimpl->extMotionDim + (m_pimpl->twistDim*idx);
-        m_pimpl->smallAdj.block<6, 6>(q, q) = iter.second.smallAdj();  
+        m_pimpl->smallAdj.block<6, 6>(q, q) = iter.second.smallAdj();
         idx++;
     }
-    
+
     // bias small adjoint set to zero
     return m_pimpl->smallAdj; 
 }
@@ -976,7 +997,7 @@ void FloatingBaseExtendedKinematicsLieGroupTangent::setBaseLinearAcceleration(Ei
 
 void FloatingBaseExtendedKinematicsLieGroupTangent::disableAugmentedVector()
 {
-    m_pimpl->isAugmentedVectorUsed = false;    
+    m_pimpl->isAugmentedVectorUsed = false;
 }
 
 void FloatingBaseExtendedKinematicsLieGroupTangent::setAugmentedVector(Eigen::Ref<const Eigen::VectorXd> augVec)
@@ -993,7 +1014,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::setSupportFrameTwist(const i
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     m_pimpl->vF.at(idx) = twist;
     return true;
 }
@@ -1006,7 +1027,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::setSupportFrameLinearVelocit
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-        
+
     auto& twist = m_pimpl->vF.at(idx);
     Eigen::Matrix<double, 6, 1> v;
     v << linearVelocity, twist.w();
@@ -1022,7 +1043,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::setSupportFrameAngularVeloci
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-        
+
     auto& twist = m_pimpl->vF.at(idx);
     Eigen::Matrix<double, 6, 1> v;
     v <<  twist.v(), angularVelocity;
@@ -1033,7 +1054,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::setSupportFrameAngularVeloci
 bool FloatingBaseExtendedKinematicsLieGroupTangent::addSupportFrameTwist(const int& idx, const manif::SE3Tangentd& twist)
 {
     std::string printPrefix{"[FloatingBaseExtendedKinematicsLieGroupTangent::addSupportFrameTwist] "};
-    
+
     if (m_pimpl->vF.find(idx) == m_pimpl->vF.end())
     {
         m_pimpl->vF[idx] = twist;
@@ -1041,7 +1062,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::addSupportFrameTwist(const i
         std::sort(m_pimpl->fIndices.begin(), m_pimpl->fIndices.end());
         return true;
     }
-    
+
     std::cerr << printPrefix << "Frame already exists. use set method to change the frame twist." << std::endl;
     return false;
 }
@@ -1054,7 +1075,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::removeSupportFrameTwist(cons
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     m_pimpl->vF.erase(idx);
     m_pimpl->fIndices.erase(std::remove(m_pimpl->fIndices.begin(), 
                                         m_pimpl->fIndices.end(), 
@@ -1113,7 +1134,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::augmentedVector(Eigen::Vecto
         std::cerr << printPrefix << "Augmented vector not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     augVec = m_pimpl->vAugmented;
     return true;
 }
@@ -1141,7 +1162,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::supportFrameTwist(const int&
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     twist = m_pimpl->vF.at(idx);
     return true;
 }
@@ -1154,7 +1175,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::supportFrameLinearVelocity(c
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     linearVelocity = m_pimpl->vF.at(idx).v();
     return true;
 }
@@ -1167,7 +1188,7 @@ bool FloatingBaseExtendedKinematicsLieGroupTangent::supportFrameAngularVelocity(
         std::cerr << printPrefix << "support frame of idx: " << idx <<" not available in the velocity representation" << std::endl;
         return false;
     }
-    
+
     angularVelocity = m_pimpl->vF.at(idx).w();
     return true;
 }
