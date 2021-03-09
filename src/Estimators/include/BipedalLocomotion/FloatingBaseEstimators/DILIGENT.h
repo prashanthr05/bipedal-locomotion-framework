@@ -99,17 +99,17 @@ protected:
     * @param[in] dt sampling period in seconds
     * @return True in case of success, false otherwise.
     */
-    virtual bool updateKinematics(const FloatingBaseEstimators::Measurements& meas,
+    virtual bool updateKinematics(FloatingBaseEstimators::Measurements& meas,
                                   const double& dt) override;
-                                  
+
     /**
     * Update the predicted state estimates using relative pose measurements of static landmarks in the environment
     * @param[in] meas measurements to update the predicted states
     * @param[in] dt sampling period in seconds
     * @return True in case of success, false otherwise.
     */
-    virtual bool updateLandmarkRelativePoses(const FloatingBaseEstimators::Measurements& meas,
-                                             const double& dt) override;                                
+    virtual bool updateLandmarkRelativePoses(FloatingBaseEstimators::Measurements& meas,
+                                             const double& dt) override;
 
 private:
     /**

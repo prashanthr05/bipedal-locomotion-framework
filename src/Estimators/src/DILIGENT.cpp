@@ -7,11 +7,12 @@
 
 #include <BipedalLocomotion/FloatingBaseEstimators/DILIGENT.h>
 #include <BipedalLocomotion/FloatingBaseEstimators/FloatingBaseExtendedKinematicsLieGroup.h>
-#include <iDynTree/Core/EigenHelpers.h>
+#include <BipedalLocomotion/Conversions/ManifConversions.h>
 
 #include <manif/manif.h>
 
 using namespace BipedalLocomotion::Estimators;
+using namespace BipedalLocomotion::Conversions;
 
 class DILIGENT::Impl
 {
@@ -28,16 +29,16 @@ public:
      * Construct  the state covariance matrix from the
      * internal state standard deviation object,
      */
-    void constuctStateVar(const FloatingBaseEstimators::StateStdDev& stateStdDev,
-                          const bool& estimateBias,
-                          Eigen::MatrixXd& P);
+    bool constuctStateVar(const FloatingBaseEstimators::InternalState& state,
+                          const FloatingBaseEstimators::StateStdDev& stateStdDev,
+                          const bool& estimateBias, Eigen::MatrixXd& P);
 
     /**
      * Extract internal state standard deviation object,
      * from the diagonal elements of the state covariance matrix
      */
-    void extractStateVar(const Eigen::MatrixXd& P,
-                         const FloatingBaseExtendedKinematicsLieGroupTangent& Omegak,
+    bool extractStateVar(const Eigen::MatrixXd& P,
+                         const FloatingBaseExtendedKinematicsLieGroup& Xk,
                          const bool& estimateBias,
                          FloatingBaseEstimators::StateStdDev& stateStdDev);
 
@@ -46,8 +47,7 @@ public:
      */
     void calcOmegak(const FloatingBaseEstimators::InternalState& X,
                     const FloatingBaseEstimators::Measurements& meas,
-                    const double& dt,
-                    const Eigen::Vector3d& g,
+                    const double& dt, const Eigen::Vector3d& g,
                     const bool& estimateBias,
                     FloatingBaseExtendedKinematicsLieGroupTangent& Omegak);
 
@@ -63,9 +63,9 @@ public:
     /**
      * Perform the Kalman filter update step given measurements and Jacobians
      */
-    bool updateStates(const Eigen::VectorXd& deltaY,
-                      const Eigen::MatrixXd measModelJacobian,
-                      const Eigen::MatrixXd& measNoiseVar,
+    bool updateStates(const Eigen::VectorXd& deltaY, const Eigen::MatrixXd H,
+                      const Eigen::MatrixXd& N, const bool& estimateBias,
+                      FloatingBaseExtendedKinematicsLieGroup& Xk,
                       FloatingBaseEstimators::InternalState& state,
                       Eigen::MatrixXd& P);
 
@@ -77,35 +77,55 @@ public:
     void calcQk(const FloatingBaseEstimators::SensorsStdDev& sensStdDev,
                 const FloatingBaseEstimators::InternalState& state,
                 const FloatingBaseExtendedKinematicsLieGroupTangent& Omegak,
-                const size_t dim,
-                const double& dt,
-                const bool& estimateBias,
-                Eigen::MatrixXd& Qc);
+                const size_t dim, const double& dt,
+                const bool& estimateBias, Eigen::MatrixXd& Qc);
 
     /**
      * Compute left parametrized velocity Jacobian
      */
     void calcSlantFk(const FloatingBaseEstimators::InternalState& X,
-                     const size_t dim,
-                     const double& dt,
-                     const Eigen::Vector3d& g,
-                     const bool& estimateBias,
+                     const size_t dim, const double& dt,
+                     const Eigen::Vector3d& g, const bool& estimateBias,
                      Eigen::MatrixXd& slantFk);
-    
+
+    bool vec2Tangent(const Eigen::VectorXd& v,
+                     const std::vector<int>& ids, const bool& estimateBias,
+                     FloatingBaseExtendedKinematicsLieGroupTangent& tangent);
+
     std::size_t dimensions(const FloatingBaseEstimators::InternalState& state, 
                            const bool& estimateBias)
     {
         std::size_t dim{9};
         dim += motionDim*state.supportFrameData.size();
         dim += motionDim*state.landmarkData.size();
-        
+
         if (estimateBias)
         {
             dim += 6;
         }
-        return dim;        
+        return dim;
     }
-    
+
+    template <typename T, typename V>
+    bool compareKeys(const std::map<int, T>& lhs, const std::map<int, V>& rhs)
+    {
+        return (lhs.size() == rhs.size()) &&
+               (std::equal(lhs.begin(), lhs.end(), rhs.begin(),
+                           [] (auto a, auto b) { return a.first == b.first; }));
+    }
+
+
+    bool addContactOrLandmark(const int& idx,  const double& time, const bool& isActive,
+                              const manif::SE3d& poseEstimate,
+                              const FloatingBaseEstimators::SensorsStdDev& sensStdDev,
+                              const double& dt, const bool& estimateBias,
+                              FloatingBaseEstimators::InternalState& state,
+                              Eigen::MatrixXd& P);
+
+    bool removeContactOrLandmark(const int& idx, const bool& estimateBias,
+                                 FloatingBaseEstimators::InternalState& state,
+                                 Eigen::MatrixXd& P);
+
     const std::size_t imuPositionOffset{0};
     const std::size_t imuOrientationOffset{3};
     const std::size_t imuLinearVelOffset{6};
@@ -115,8 +135,13 @@ public:
     const std::size_t gyroBiasOffsetFromTail{3};
     Eigen::Matrix3d I3;
     manif::SE3Tangentd zeroTwist;
-    
+
     Eigen::MatrixXd m_P;      /**< state covariance matrix */
+
+    std::vector<int> existingContact;
+    std::vector<int> existingLdmk;
+
+    /** The following buffers are updated automatically through m_state and m_P*/
     FloatingBaseExtendedKinematicsLieGroup Xk;
     FloatingBaseExtendedKinematicsLieGroupTangent Omegak;
     FloatingBaseExtendedKinematicsLieGroupTangent negOmegak;
@@ -124,7 +149,17 @@ public:
     Eigen::MatrixXd AdjNegativeOmegaLifted;
     Eigen::MatrixXd Jr; /**<right Jacobian of Lie group at Omega as tangent */
     Eigen::MatrixXd Fk; /**< system dynamics Jacobian*/
-    
+    Eigen::MatrixXd PHT;
+    Eigen::MatrixXd H; /**< Measurement model Jacobian */
+    Eigen::MatrixXd N; /**< Measurement noise covariance matrix */
+    Eigen::MatrixXd S; /**< innovation covariance*/
+    Eigen::MatrixXd K; /**< Kalman gain*/
+    Eigen::VectorXd deltaY; /**< innovation in vector space*/
+    Eigen::VectorXd deltaX; /**< state update in vector space*/
+    FloatingBaseExtendedKinematicsLieGroupTangent dX;
+    Eigen::MatrixXd dXJr; /**<right Jacobian of Lie group at state correction as tangent */
+    Eigen::MatrixXd IminusKH;
+
     /**< for proper handling of contact frame index and 
      * landmark index within the same map, 
      * if landmark id = 1 and landmarkIDsOffset = 1000, 
@@ -171,7 +206,7 @@ DILIGENT::DILIGENT() : m_pimpl(std::make_unique<Impl>())
     m_sensorsDev.swingFootAngvelNoise.setZero();
     m_sensorsDev.landmarkMeasurementNoise.setZero();
     m_sensorsDev.landmarkPredictionNoise.setZero();
-    
+
     m_pimpl->I3 = Eigen::Matrix3d::Identity();
     m_pimpl->zeroTwist.setZero();
 }
@@ -224,19 +259,31 @@ bool DILIGENT::customInitialization(std::weak_ptr<BipedalLocomotion::ParametersH
         return false;
     }
 
+    // construct priors
+    if (!m_pimpl->constuctStateVar(m_state, m_priors, m_options.imuBiasEstimationEnabled, m_pimpl->m_P))
+    {
+        std::cerr << "[DILIGENT::customInitialization] Could not construct initial state covariance matrix."
+        << std::endl;
+        return false;
+    }
 
-    m_pimpl->constuctStateVar(m_priors, m_options.imuBiasEstimationEnabled, m_pimpl->m_P); // construct priors
     return true;
 }
 
 bool DILIGENT::resetEstimator(const FloatingBaseEstimators::InternalState& newState,
-                                               const FloatingBaseEstimators::StateStdDev& newPriorDev)
+                              const FloatingBaseEstimators::StateStdDev& newPriorDev)
 {
     m_state = newState;
     m_stateStdDev = newPriorDev;
     m_priors = newPriorDev;
 
-    m_pimpl->constuctStateVar(m_priors, m_options.imuBiasEstimationEnabled, m_pimpl->m_P); // construct priors
+    if (!m_pimpl->constuctStateVar(m_state, m_priors, m_options.imuBiasEstimationEnabled, m_pimpl->m_P))
+    {
+        std::cerr << "[DILIGENT::resetEstimator] Could not construct state covariance matrix."
+        << std::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -257,14 +304,14 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
                         m_options.accelerationDueToGravity,
                         m_options.imuBiasEstimationEnabled,
                         m_pimpl->Omegak);
-    
+
     m_pimpl->negOmegak = -m_pimpl->Omegak;
-    
+
     // left parametrized velocity Jacobian
     m_pimpl->calcSlantFk(m_state, dim, dt,
                          m_options.accelerationDueToGravity,
                          m_options.imuBiasEstimationEnabled, m_pimpl->slantFk); // compute slantFk at priori state 
-    
+
     // prediction model covariance matrix
     m_pimpl->calcQk(m_sensorsDev, m_state, 
                     m_pimpl->Omegak, dim, dt, 
@@ -273,271 +320,328 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
     // Map the changes from tangent space at X to tangent space at Identity
     m_pimpl->AdjNegativeOmegaLifted = m_pimpl->negOmegak.exp().adj();
     m_pimpl->Jr = m_pimpl->Omegak.rjac(); // right Jacobian of Lie group at Omega as tangent
-    
+
     if (m_pimpl->AdjNegativeOmegaLifted.cols() != m_pimpl->Jr.cols() &&
         m_pimpl->Jr.cols() != m_pimpl->slantFk.rows())
     {
         std::cerr << "[DILIGENT::predictState] Jacobian matrices size mismatch" << std::endl;
-        return false;        
+        return false;
     }
-    
+
     m_pimpl->Fk = m_pimpl->AdjNegativeOmegaLifted + (m_pimpl->Jr*m_pimpl->slantFk);
-        
+
     // m_state is now predicted state after this function call
     if (!m_pimpl->propagateStates(m_pimpl->Xk, 
                                   m_pimpl->Omegak, 
                                   m_options.imuBiasEstimationEnabled, 
                                   m_state))
     {
+        std::cerr << "[DILIGENT::predictState] unable to propagate state mean." << std::endl;
         return false;
     }
-    
+
     if (m_pimpl->Fk.cols() != m_pimpl->m_P.rows())
     {
         std::cerr << "[DILIGENT::predictState] covariance matrices size mismatch" << std::endl;
-        return false;        
+        return false;
     }
-    
+
     m_pimpl->m_P = m_pimpl->Fk*m_pimpl->m_P*(m_pimpl->Fk.transpose()) + 
                    m_pimpl->Jr*(m_pimpl->Qk*dt)*(m_pimpl->Jr.transpose());
-//     m_pimpl->extractStateVar(m_pimpl->m_P,m_options.imuBiasEstimationEnabled, m_stateStdDev); // unwrap state covariance matrix diagonal*/
+
+    if (m_pimpl->extractStateVar(m_pimpl->m_P,
+                                 m_pimpl->Xk,
+                                 m_options.imuBiasEstimationEnabled,
+                                 m_stateStdDev))// unwrap state covariance matrix diagonal
+    {
+        std::cerr << "[DILIGENT::predictState] unable to extract from predicted state covariance matrix." << std::endl;
+        return false;
+    }
 
     return true;
 }
 
-bool DILIGENT::updateKinematics(const FloatingBaseEstimators::Measurements& meas,
+bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
                                 const double& dt)
 {
-//     Eigen::VectorXd deltaY;
-//     Eigen::MatrixXd measModelJacobian, measNoiseVar;
-// 
-//     // extract current predicted state
-//     Eigen::Matrix3d A_R_IMU = m_state.imuOrientation.toRotationMatrix();
-//     Eigen::Matrix3d A_R_LF = m_state.lContactFrameOrientation.toRotationMatrix();
-//     Eigen::Matrix3d A_R_RF = m_state.rContactFrameOrientation.toRotationMatrix();
-// 
-//     const Eigen::Vector3d& p = m_state.imuPosition;
-//     const Eigen::Vector3d& plf = m_state.lContactFramePosition;
-//     const Eigen::Vector3d& prf = m_state.rContactFramePosition;
-// 
-//     iDynTree::JointPosDoubleArray jointPos(meas.encoders.size());
-//     iDynTree::toEigen(jointPos) = meas.encoders;
-//     iDynTree::Transform yIMU_H_LF, yIMU_H_RF;
-//     iDynTree::MatrixDynSize LF_J_IMULF, RF_J_IMURF;
-//     m_modelComp.getIMU_H_feet(jointPos, yIMU_H_LF, yIMU_H_RF);
-//     m_modelComp.getLeftTrivializedJacobianFeetWRTIMU(jointPos, LF_J_IMULF, RF_J_IMURF);
-// 
-//     auto Jl{iDynTree::toEigen(LF_J_IMULF)};
-//     auto Jr{iDynTree::toEigen(RF_J_IMURF)};
-// 
-//     Eigen::VectorXd encodersVar = m_sensorsDev.encodersNoise.array().square();
-//     Eigen::MatrixXd Renc = static_cast<Eigen::MatrixXd>(encodersVar.asDiagonal());
-// 
-//     // For double support, the measurement model is as follows
-//     //
-//     // h(X) = [A_R_B.T A_R_LF  A_R_B.T (plf - p)                                    ]
-//     //        [                                1                                    ]
-//     //        [                                   A_R_B.T A_R_RF   A_R_B.T (prf - p)]
-//     //        [                                                                    1]
-//     //
-//     // h(X) \in SE(3) \times SE(3)
-//     // hinv = h^{-1}(x) can be easily computed similar to inverse of a spatial transform
-//     // by exploiting the concept of direct product induced by composite manifolds.
-//     // Here we have a direct product of rigid body transforms SE(3) forming the composite manifold
-//     // SE(3)xSE(3)
-//     //
-//     // The innovation term in the Lie algebra of the SE(3) \times SE(3) Liegroup space becomes,
-//     // deltaY = logvee_SE3xSE3(hinv, y)
-//     //
-//     // The measurement model Jacobian for the double support, if biases are included,
-//     // H = [-A_R_LF.T A_R_IMU | -A_R_LF.T [p - plf]x A_R_IMU |  0_3 |   I | 0_3 | 0_3 | 0_3 | 0_3 | 0_3 ]
-//     //     [              0_3 |            -A_R_LF.T A_R_IMU |  0_3 | 0_3 |   I | 0_3 | 0_3 | 0_3 | 0_3 ]
-//     //     [-A_R_RF.T A_R_IMU | -A_R_RF.T [p - plf]x A_R_IMU |  0_3 | 0_3 | 0_3 |   I | 0_3 | 0_3 | 0_3 ]
-//     //     [              0_3 |            -A_R_RF.T A_R_IMU |  0_3 | 0_3 | 0_3 | 0_3 |   I | 0_3 | 0_3 ]
-//     // I is the 3d identity matrix, []x is the 3d skew symmetric matrix
-//     // If biases are enabled, the last 6 columns are not considered
-//     //
-//     // The measurement noise covariance,
-//     // Rc = blkdiag(LF_J_{IMU,LF} Renc LF_J_{IMU,LF}.T,  RF_J_{IMU,RF} Renc RF_J_{IMU,RF}.T)
-//     // Rk = Rc/dt is the discretized measurement noise covariance matrix
-//     // The measurement noise is left-trivialized forward kinematic velocity noise which is computed
-//     // using the manipulator Jacobian of the foot with respect to the IMU
-//     //
-//     // These matrices can easily be reduced for single support cases where observation space is defined by SE(3) Lie group
-// 
-//     if (meas.lfInContact && meas.rfInContact)
-//     {
-//         const int measurementSpaceDims{12};
-// 
-//         // prepare measurement model Jacobian H
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWBias);
-//         }
-//         else
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWOBias);
-//         }
-// 
-//         // prepare measurement error in tangent space
-//         deltaY.resize(measurementSpaceDims);
-//         Pose yLF = m_pimpl->iDynPose2manifPose(yIMU_H_LF);
-//         Pose hLF = m_pimpl->eigenPose2manifPose(A_R_IMU.transpose()*A_R_LF, A_R_IMU.transpose()*(plf - p));
-//         auto lfPoseError = yLF - hLF; // this performs logvee_SE3(inv(hLF), yLF)
-// 
-//         Pose yRF = m_pimpl->iDynPose2manifPose(yIMU_H_RF);
-//         Pose hRF = m_pimpl->eigenPose2manifPose(A_R_IMU.transpose()*A_R_RF, A_R_IMU.transpose()*(prf - p));
-//         auto rfPoseError = yRF - hRF; // this performs logvee_SE3(inv(hLF), yLF)
-//         deltaY << lfPoseError.coeffs(), rfPoseError.coeffs();
-// 
-//         // just aliasing using a reference
-//         Eigen::MatrixXd& H = measModelJacobian;
-// 
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuPosition) = -A_R_LF.transpose()*A_R_IMU;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_LF.transpose()*iDynTree::skew(p - plf)*A_R_IMU;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.lContactFramePosition).setIdentity();
-//         H.block<3, 9>(0, m_pimpl->m_vecOffsets.lContactFrameOrientation).setZero();
-// 
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuPosition).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_LF.transpose()*A_R_IMU;
-//         H.block<3, 6>(3, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.lContactFrameOrientation).setIdentity();
-//         H.block<3, 6>(3, m_pimpl->m_vecOffsets.rContactFramePosition).setZero();
-// 
-//         H.block<3, 3>(6, m_pimpl->m_vecOffsets.imuPosition) = -A_R_RF.transpose()*A_R_IMU;
-//         H.block<3, 3>(6, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_RF.transpose()*iDynTree::skew(p - prf)*A_R_IMU;
-//         H.block<3, 9>(6, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(6, m_pimpl->m_vecOffsets.rContactFramePosition).setIdentity();
-//         H.block<3, 3>(6, m_pimpl->m_vecOffsets.rContactFrameOrientation).setZero();
-// 
-//         H.block<3, 3>(9, m_pimpl->m_vecOffsets.imuPosition).setZero();
-//         H.block<3, 3>(9, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_RF.transpose()*A_R_IMU;
-//         H.block<3, 12>(9, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(9, m_pimpl->m_vecOffsets.rContactFrameOrientation).setIdentity();
-// 
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             H.block<12, 6>(0, m_pimpl->m_vecOffsets.accBias).setZero();
-//         }
-// 
-// 
-//         // prepare measurement noise covariance R
-//         measNoiseVar.resize(measurementSpaceDims, measurementSpaceDims);
-//         measNoiseVar.topLeftCorner<6, 6>() = Jl*Renc*(Jl.transpose());
-//         measNoiseVar.topRightCorner<6, 6>().setZero();
-//         measNoiseVar.bottomRightCorner<6, 6>() = Jr*Renc*(Jr.transpose());
-//         measNoiseVar.bottomLeftCorner<6, 6>().setZero();
-//         measNoiseVar /= dt;
-//     }
-//     else if (meas.lfInContact)
-//     {
-//         const int measurementSpaceDims{6};
-// 
-//         // prepare measurement model Jacobian H
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWBias);
-//         }
-//         else
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWOBias);
-//         }
-// 
-//         // prepare measurement error in tangent space
-//         deltaY.resize(measurementSpaceDims);
-//         Pose yLF = m_pimpl->iDynPose2manifPose(yIMU_H_LF);
-//         Pose hLF = m_pimpl->eigenPose2manifPose(A_R_IMU.transpose()*A_R_LF, A_R_IMU.transpose()*(plf - p));
-//         auto lfPoseError = yLF - hLF; // this performs logvee_SE3(inv(hLF), yLF)
-//         deltaY << lfPoseError.coeffs();
-// 
-//         // just aliasing using a reference
-//         Eigen::MatrixXd& H = measModelJacobian;
-// 
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuPosition) = -A_R_LF.transpose()*A_R_IMU;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_LF.transpose()*iDynTree::skew(p - plf)*A_R_IMU;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.lContactFramePosition).setIdentity();
-//         H.block<3, 9>(0, m_pimpl->m_vecOffsets.lContactFrameOrientation).setZero();
-// 
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuPosition).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_LF.transpose()*A_R_IMU;
-//         H.block<3, 6>(3, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.lContactFrameOrientation).setIdentity();
-//         H.block<3, 6>(3, m_pimpl->m_vecOffsets.rContactFramePosition).setZero();
-// 
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             H.block<6, 6>(0, m_pimpl->m_vecOffsets.accBias).setZero();
-//         }
-// 
-// 
-//         // prepare measurement noise covariance R
-//         measNoiseVar.resize(measurementSpaceDims, measurementSpaceDims);
-//         measNoiseVar = Jl*Renc*(Jl.transpose());
-// 
-//         measNoiseVar /= dt;
-//     }
-//     else if (meas.rfInContact)
-//     {
-//         const int measurementSpaceDims{6};
-// 
-//         // prepare measurement model Jacobian H
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWBias);
-//         }
-//         else
-//         {
-//             measModelJacobian.resize(measurementSpaceDims, m_pimpl->m_vecSizeWOBias);
-//         }
-// 
-//         // prepare measurement error in tangent space
-//         deltaY.resize(measurementSpaceDims);
-//         Pose yRF = m_pimpl->iDynPose2manifPose(yIMU_H_RF);
-//         Pose hRF = m_pimpl->eigenPose2manifPose(A_R_IMU.transpose()*A_R_RF, A_R_IMU.transpose()*(prf - p));
-//         Twist rfPoseError = yRF - hRF; // this performs logvee_SE3(inv(hLF), yLF)
-//         deltaY << rfPoseError.coeffs();
-// 
-//         // just aliasing using a reference
-//         Eigen::MatrixXd& H = measModelJacobian;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuPosition) = -A_R_RF.transpose()*A_R_IMU;
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_RF.transpose()*iDynTree::skew(p - prf)*A_R_IMU;
-//         H.block<3, 9>(0, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.rContactFramePosition).setIdentity();
-//         H.block<3, 3>(0, m_pimpl->m_vecOffsets.rContactFrameOrientation).setZero();
-// 
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuPosition).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.imuOrientation) = -A_R_RF.transpose()*A_R_IMU;
-//         H.block<3, 12>(3, m_pimpl->m_vecOffsets.imuLinearVel).setZero();
-//         H.block<3, 3>(3, m_pimpl->m_vecOffsets.rContactFrameOrientation).setIdentity();
-// 
-//         if (m_options.imuBiasEstimationEnabled)
-//         {
-//             H.block<6, 6>(0, m_pimpl->m_vecOffsets.accBias).setZero();
-//         }
-// 
-//         // prepare measurement noise covariance R
-//         measNoiseVar.resize(measurementSpaceDims, measurementSpaceDims);
-//         measNoiseVar = Jr*Renc*(Jr.transpose());
-//         measNoiseVar /= dt;
-//     }
-// 
-//     if (meas.lfInContact || meas.rfInContact)
-//     {
-//         if (!m_pimpl->updateStates(deltaY, measModelJacobian, measNoiseVar, m_state, m_pimpl->m_P))
-//         {
-//             return false;
-//         }
-//         m_pimpl->extractStateVar(m_pimpl->m_P,m_options.imuBiasEstimationEnabled, m_stateStdDev); // unwrap state covariance matrix diagonal
-//     }
+    // extract current predicted state
+    Eigen::Matrix3d R = m_state.imuOrientation.toRotationMatrix();
+    const Eigen::Vector3d& p = m_state.imuPosition;
+    manif::SE3d imuPosePred = Conversions::toManifPose(R, p);
+
+    if ( (meas.encoders.size() != m_modelComp.nrJoints()) ||
+         (meas.encodersSpeed.size() != m_modelComp.nrJoints()) ||
+         (m_sensorsDev.encodersNoise.size() != m_modelComp.nrJoints()) )
+    {
+        std::cerr << "[DILIGENT::updateKinematics] encoder measurement and noise parameter size mismatch." << std::endl;
+        return false;
+    }
+
+    if (!m_modelComp.kinDyn()->setJointPos(iDynTree::make_span(meas.encoders.data(), meas.encoders.size())))
+    {
+        std::cerr << "[DILIGENT::updateKinematics] unable to set joint positions." << std::endl;
+        return false;
+    }
+
+    Eigen::VectorXd encodersVar = m_sensorsDev.encodersNoise.array().square();
+    Eigen::MatrixXd Renc = static_cast<Eigen::MatrixXd>(encodersVar.asDiagonal());
+
+    // for each measurement
+    // check for existing contact
+    // if not available add new contact
+    m_pimpl->existingContact.clear();
+    for (auto& iter : m_state.supportFrameData)
+    {
+        m_pimpl->existingContact.push_back(iter.first);
+    }
+
+    std::vector<manif::SE3d> measPoses;
+    // first iterate through measurement and add new contacts
+    for (auto& iter : meas.stampedContactsStatus)
+    {
+        auto contactid = iter.first;
+        auto relContactPose = Conversions::toManifPose(m_modelComp.kinDyn()->getRelativeTransform(m_modelComp.baseIMUIdx(), contactid));
+        measPoses.push_back(relContactPose);
+
+        if (std::find(m_pimpl->existingContact.begin(), m_pimpl->existingContact.end(),
+            iter.first) == m_pimpl->existingContact.end())
+        {
+            auto contactData = iter.second;
+            auto timestamp = contactData.lastUpdateTime;
+            bool isActive{contactData.isActive};
+
+            if (!m_pimpl->addContactOrLandmark(contactid, timestamp, isActive,
+                                               imuPosePred*relContactPose,
+                                               m_sensorsDev, m_dt,
+                                               m_options.imuBiasEstimationEnabled,
+                                               m_state, m_pimpl->m_P))
+            {
+                continue;
+            }
+        }
+    }
+
+    // construct stack sub H and sub deltaY
+    // construct blkdiag of sub N
+    // When a contact is made at F, the measurement model is as follows
+    //
+    // h(X) = [A_R_B.T A_R_F  A_R_B.T (pf - p) ]   \in SE(3)
+    //        [                             1  ]
+    // The innovation term is in the Lie algebra of the SE(3),
+    // deltaY = logvee_SE3(hinv, y)
+    //
+    // The measurement model Jacobian for two contacts RF and LF becomes, if biases are included,
+    // H = [-A_R_LF.T A_R_IMU | -A_R_LF.T [p - plf]x A_R_IMU |  0_3 |   I | 0_3 | 0_3 | 0_3 | 0_3 | 0_3 ]
+    //     [              0_3 |            -A_R_LF.T A_R_IMU |  0_3 | 0_3 |   I | 0_3 | 0_3 | 0_3 | 0_3 ]
+    //     [-A_R_RF.T A_R_IMU | -A_R_RF.T [p - plf]x A_R_IMU |  0_3 | 0_3 | 0_3 |   I | 0_3 | 0_3 | 0_3 ]
+    //     [              0_3 |            -A_R_RF.T A_R_IMU |  0_3 | 0_3 | 0_3 | 0_3 |   I | 0_3 | 0_3 ]
+    // I is the 3d identity matrix, []x is the 3d skew symmetric matrix
+    // If biases are enabled, the last 6 columns are not considered
+    //
+    // The measurement noise covariance sub-block corrsponding to F,
+    // Rc = F_J_{IMU,LF} Renc LF_J_{IMU,LF}.T
+    // N = Rc/dt is the discretized measurement noise covariance matrix
+    // The measurement noise is left-trivialized forward kinematic velocity noise which is computed
+    // using the manipulator Jacobian of the foot with respect to the IMU
+    //
+    // For multiple contacts, the H matrices are stacked and N matrices are block diagonalized
+    const int stateSpaceDims = m_pimpl->dimensions(m_state, m_options.imuBiasEstimationEnabled);
+    const int measurementSpaceDims = meas.stampedRelLandmarkPoses.size()*m_pimpl->motionDim;
+    m_pimpl->H.resize(measurementSpaceDims, stateSpaceDims);
+    m_pimpl->H.setZero();
+    m_pimpl->N.resize(measurementSpaceDims, measurementSpaceDims);
+    m_pimpl->N.setZero();
+    m_pimpl->deltaY.resize(measurementSpaceDims);
+    m_pimpl->deltaY.setZero();
+
+    int k = 0; // measurement space index jump
+    for (auto& obs : meas.stampedContactsStatus)
+    {
+        int contactOffsetMeas = k*m_pimpl->motionDim;
+        int j = 0; // state space index jump
+        for (auto& iter : m_state.supportFrameData)
+        {
+            auto& contactId = obs.first;
+            auto& contactState = obs.second.isActive;
+            if (iter.first == contactId && contactState) // update if contact is active
+            {
+                int contactOffsetState = m_pimpl->extMotionDim  + (j*m_pimpl->motionDim);
+                Eigen::Matrix3d Z = m_state.supportFrameData.at(iter.first).pose.asSO3().rotation();
+                Eigen::Vector3d d = m_state.supportFrameData.at(iter.first).pose.translation();
+
+                auto hOfX = Conversions::toManifPose(R.transpose()*Z, R.transpose()*(d - p));
+                auto& y = measPoses[k];
+
+                // innovation
+                auto poseError = y - hOfX;  // this performs logvee_SE3(inv(hOfX), y)
+                m_pimpl->deltaY.segment<6>(contactOffsetMeas) = poseError.coeffs();
+
+                // measurement noise covariance
+                Eigen::MatrixXd F_J_IMUF(m_pimpl->motionDim, m_modelComp.kinDyn()->getNrOfDegreesOfFreedom());
+                bool ok = m_modelComp.kinDyn()->getRelativeJacobianExplicit(m_modelComp.baseIMUIdx(), contactId,
+                                                                           contactId, contactId, F_J_IMUF);
+                m_pimpl->N.block<6, 6>(contactOffsetMeas, contactOffsetMeas) = F_J_IMUF*Renc*(F_J_IMUF.transpose());
+
+                // measurement model Jacobian
+                Eigen::MatrixXd jacIMU(m_pimpl->motionDim, m_pimpl->motionDim);
+                // [  -Z.T R  | -Z.T [p - d]x R  | 0_3 ... I_3 | 0_3 ...]
+                // [     0_3  |          -Z.T R  | 0_3 ... 0_3 | I_3 ...]
+                jacIMU <<  -Z.transpose()*R, -Z.transpose()*manif::skew(p - d)*R,
+                    Eigen::Matrix3d::Zero(), -Z.transpose()*R;
+
+                m_pimpl->H.block<6, 6>(contactOffsetMeas, m_pimpl->imuPositionOffset) = jacIMU;
+                m_pimpl->H.block<6, 6>(contactOffsetMeas, contactOffsetState).setIdentity();
+                break;
+            }
+            j++;
+        }
+
+        k++;
+    }
+
+    // discretize the measurement noise covariance
+    m_pimpl->N /= dt;
+
+    // update state and covariance and clear used measurements
+    if (meas.stampedContactsStatus.size() > 0)
+    {
+        meas.stampedContactsStatus.clear();
+        if (!m_pimpl->updateStates(m_pimpl->deltaY, m_pimpl->H, m_pimpl->N,
+                                   m_options.imuBiasEstimationEnabled, m_pimpl->Xk,
+                                   m_state, m_pimpl->m_P))
+        {
+            std::cerr << "[DILIGENT::updateKinematics] unable to correct states with landmark measurements." << std::endl;
+            return false;
+        }
+
+        if (m_pimpl->extractStateVar(m_pimpl->m_P,
+                                     m_pimpl->Xk,
+                                     m_options.imuBiasEstimationEnabled,
+                                     m_stateStdDev))// unwrap state covariance matrix diagonal
+        {
+            std::cerr << "[DILIGENT::updateKinematics] unable to extract from predicted state covariance matrix." << std::endl;
+            return false;
+        }
+    }
 
     return true;
 }
 
-bool DILIGENT::updateLandmarkRelativePoses(const FloatingBaseEstimators::Measurements& meas,
+bool DILIGENT::updateLandmarkRelativePoses(FloatingBaseEstimators::Measurements& meas,
                                            const double& dt)
 {
+    Eigen::Matrix3d R = m_state.imuOrientation.toRotationMatrix();
+    const Eigen::Vector3d& p = m_state.imuPosition;
+    manif::SE3d imuPosePred = Conversions::toManifPose(R, p);
+
+    // for each measurement
+    // check for existing landmark
+    // if not available add new landmark
+    m_pimpl->existingLdmk.clear();
+    for (auto& iter : m_state.landmarkData)
+    {
+        m_pimpl->existingLdmk.push_back(iter.first);
+    }
+
+    // first iterate through measurement and add new landmarks
+    for (auto& iter : meas.stampedRelLandmarkPoses)
+    {
+        if (std::find(m_pimpl->existingLdmk.begin(), m_pimpl->existingLdmk.end(),
+            iter.first) == m_pimpl->existingLdmk.end())
+        {
+            auto ldmkid = m_pimpl->landmarkIDsOffset+iter.first;
+            auto ldmkData = iter.second;
+            auto timestamp = ldmkData.lastUpdateTime;
+            auto relLdmkPose = ldmkData.pose;
+            bool isActive{true};
+
+            if (!m_pimpl->addContactOrLandmark(ldmkid, timestamp, isActive,
+                                               imuPosePred*relLdmkPose,
+                                               m_sensorsDev, m_dt,
+                                               m_options.imuBiasEstimationEnabled,
+                                               m_state, m_pimpl->m_P))
+            {
+                continue;
+            }
+        }
+    }
+
+    // construct stack sub H and sub deltaY
+    // construct blkdiag of sub N
+    const int stateSpaceDims = m_pimpl->dimensions(m_state, m_options.imuBiasEstimationEnabled);
+    const int measurementSpaceDims = meas.stampedRelLandmarkPoses.size()*m_pimpl->motionDim;
+    m_pimpl->H.resize(measurementSpaceDims, stateSpaceDims);
+    m_pimpl->H.setZero();
+    m_pimpl->N.resize(measurementSpaceDims, measurementSpaceDims);
+    m_pimpl->N.setZero();
+    m_pimpl->deltaY.resize(measurementSpaceDims);
+    m_pimpl->deltaY.setZero();
+
+    int k = 0; // measurement space index jump
+    for (auto& obs : meas.stampedRelLandmarkPoses)
+    {
+        int ldmkOffsetMeas = k*m_pimpl->motionDim;
+        int j = m_state.supportFrameData.size(); // state space index jump
+        for (auto& iter : m_state.landmarkData)
+        {
+            if (iter.first == obs.first)
+            {
+                int ldmkOffsetState = m_pimpl->extMotionDim  + (j*m_pimpl->motionDim);
+                Eigen::Matrix3d Z = m_state.landmarkData.at(iter.first).pose.asSO3().rotation();
+                Eigen::Vector3d d = m_state.landmarkData.at(iter.first).pose.translation();
+
+                auto hOfX = Conversions::toManifPose(R.transpose()*Z, R.transpose()*(d - p));
+                auto& y = obs.second.pose;
+
+                // innovation
+                auto poseError = y - hOfX;  // this performs logvee_SE3(inv(hOfX), y)
+                m_pimpl->deltaY.segment<6>(ldmkOffsetMeas) = poseError.coeffs();
+
+                // measurement noise covariance
+                Eigen::VectorXd ldmkVar = m_sensorsDev.landmarkMeasurementNoise.array().square();
+                m_pimpl->N.block<6, 6>(ldmkOffsetMeas, ldmkOffsetMeas) = static_cast<Eigen::MatrixXd>(ldmkVar.asDiagonal());
+
+                // measurement model Jacobian
+                Eigen::MatrixXd jacIMU(m_pimpl->motionDim, m_pimpl->motionDim);
+                // [  -Z.T R  | -Z.T [p - d]x R  | 0_3 ... I_3 | 0_3 ...]
+                // [     0_3  |          -Z.T R  | 0_3 ... 0_3 | I_3 ...]
+                jacIMU <<  -Z.transpose()*R, -Z.transpose()*manif::skew(p - d)*R,
+                    Eigen::Matrix3d::Zero(), -Z.transpose()*R;
+
+                m_pimpl->H.block<6, 6>(ldmkOffsetMeas, m_pimpl->imuPositionOffset) = jacIMU;
+                m_pimpl->H.block<6, 6>(ldmkOffsetMeas, ldmkOffsetState).setIdentity();
+                break;
+            }
+            j++;
+        }
+        k++;
+    }
+
+    // discretize the measurement noise covariance
+    m_pimpl->N /= dt;
+
+    // update state and covariance and clear used measurements
+    if (meas.stampedRelLandmarkPoses.size() > 0)
+    {
+        meas.stampedRelLandmarkPoses.clear();
+        if (!m_pimpl->updateStates(m_pimpl->deltaY, m_pimpl->H, m_pimpl->N,
+                                   m_options.imuBiasEstimationEnabled, m_pimpl->Xk,
+                                   m_state, m_pimpl->m_P))
+        {
+            std::cerr << "[DILIGENT::updateLandmarkRelativePoses] unable to correct states with landmark measurements." << std::endl;
+            return false;
+        }
+
+        if (m_pimpl->extractStateVar(m_pimpl->m_P,
+                                     m_pimpl->Xk,
+                                     m_options.imuBiasEstimationEnabled,
+                                     m_stateStdDev))// unwrap state covariance matrix diagonal
+        {
+            std::cerr << "[DILIGENT::updateLandmarkRelativePoses] unable to extract from predicted state covariance matrix." << std::endl;
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -548,19 +652,19 @@ bool DILIGENT::Impl::propagateStates(FloatingBaseExtendedKinematicsLieGroup& Xk,
 {
     auto exphatOmega = Omegak.exp();
     constructStateLieGroup(state, estimateBias, Xk);
-    
+
     if (Xk.nrOfSupportFrames() != exphatOmega.nrOfSupportFrames())
     {
         std::cerr << "[DILIGENT::propagateStates] support frames size mismatch" << std::endl;
-        return false;        
+        return false;
     }
-    
+
     if (Xk.isAugmentedVectorUsed() != exphatOmega.isAugmentedVectorUsed())
     {
         std::cerr << "[DILIGENT::propagateStates] bias handling mismatch" << std::endl;
         return false;
     }
-    
+
     auto M = Xk*exphatOmega;
 
     if (!extractStateFromLieGroup(M, estimateBias, state))
@@ -573,56 +677,59 @@ bool DILIGENT::Impl::propagateStates(FloatingBaseExtendedKinematicsLieGroup& Xk,
 }
 
 bool DILIGENT::Impl::updateStates(const Eigen::VectorXd& deltaY,
-                                  const Eigen::MatrixXd measModelJacobian,
-                                  const Eigen::MatrixXd& measNoiseVar,
+                                  const Eigen::MatrixXd Hk,
+                                  const Eigen::MatrixXd& Nk,
+                                  const bool& estimateBias,
+                                  FloatingBaseExtendedKinematicsLieGroup& Xk,
                                   FloatingBaseEstimators::InternalState& state,
                                   Eigen::MatrixXd& P)
 {
-//     if (measModelJacobian.cols() != P.rows())
-//     {
-//         std::cerr << "[DILIGENT::updateStates] Measurement model Jacobian size mismatch" << std::endl;
-//         return false;
-//     }
-// 
-//     if (measModelJacobian.rows() != measNoiseVar.rows())
-//     {
-//         std::cerr << "[DILIGENT::updateStates] Measurement noise covariance matrix size mismatch" << std::endl;
-//         return false;
-//     }
-// 
-//     bool estimateBias;
-//     if (P.rows() == m_vecSizeWBias)
-//     {
-//         estimateBias = true;
-//     }
-//     else
-//     {
-//         estimateBias = false;
-//     }
-// 
-//     Eigen::MatrixXd PHT = P*measModelJacobian.transpose();
-//     Eigen::MatrixXd S = measModelJacobian*PHT + measNoiseVar;
-//     Eigen::MatrixXd K = PHT*(S.inverse());
-// 
-//     Eigen::VectorXd deltaX = K*deltaY;
-// 
-//     // update estimate
-//     if (!propagateStates(deltaX, estimateBias, state))
-//     {
-//         return false;
-//     }
-// 
-//     // update covariance
-//     IMUBipedMatrixLieGroupTangent v(deltaX);
-//     Eigen::MatrixXd Jr = v.rjac();
-//     auto IminusKH = Eigen::MatrixXd::Identity(P.rows(), P.cols()) - K*measModelJacobian;
-//     P = Jr*IminusKH*P*(Jr.transpose());
+    if (Hk.cols() != P.rows())
+    {
+        std::cerr << "[DILIGENT::updateStates] Measurement model Jacobian size mismatch" << std::endl;
+        return false;
+    }
+
+    if (Hk.rows() != Nk.rows())
+    {
+        std::cerr << "[DILIGENT::updateStates] Measurement noise covariance matrix size mismatch" << std::endl;
+        return false;
+    }
+
+    if (Xk.dimensions() != P.rows())
+    {
+        std::cerr << "[DILIGENT::updateStates] underlying Lie group dimensions mismatch" << std::endl;
+        return false;
+    }
+
+    PHT = P*Hk.transpose();
+    S = Hk*PHT + Nk;
+    K = PHT*(S.inverse());
+    deltaX = K*deltaY;
+
+    if (!vec2Tangent(deltaX, Xk.supportFrameIndices(), estimateBias, dX))
+    {
+        std::cerr << "[DILIGENT::updateStates] could not retrieve Lie group tangent" << std::endl;
+        return false;
+    }
+
+    // update estimate
+    if (!propagateStates(Xk, dX, estimateBias, state))
+    {
+        std::cerr << "[DILIGENT::updateStates] could not correct state estimate using measurement updates" << std::endl;
+        return false;
+    }
+
+    // update covariance
+    dXJr = dX.rjac();
+    IminusKH = Eigen::MatrixXd::Identity(P.rows(), P.cols()) - K*Hk;
+    P = dXJr*IminusKH*P*(dXJr.transpose());
 
     return true;
 }
 
-void DILIGENT::Impl::extractStateVar(const Eigen::MatrixXd& P,
-                                     const FloatingBaseExtendedKinematicsLieGroupTangent& Omegak,
+bool DILIGENT::Impl::extractStateVar(const Eigen::MatrixXd& P,
+                                     const FloatingBaseExtendedKinematicsLieGroup& Xk,
                                      const bool& estimateBias,
                                      FloatingBaseEstimators::StateStdDev& stateStdDev)
 {
@@ -630,61 +737,97 @@ void DILIGENT::Impl::extractStateVar(const Eigen::MatrixXd& P,
     stateStdDev.imuOrientation =  P.block<3, 3>(imuOrientationOffset, imuOrientationOffset).diagonal().array().sqrt();
     stateStdDev.imuLinearVelocity =  P.block<3, 3>(imuLinearVelOffset, imuLinearVelOffset).diagonal().array().sqrt();
 
-//     stateStdDev.lContactFramePosition =  P.block<3, 3>(m_vecOffsets.lContactFramePosition, m_vecOffsets.lContactFramePosition).diagonal().array().sqrt();
-//     stateStdDev.lContactFrameOrientation =  P.block<3, 3>(m_vecOffsets.lContactFrameOrientation, m_vecOffsets.lContactFrameOrientation).diagonal().array().sqrt();
-// 
-//     stateStdDev.rContactFramePosition =  P.block<3, 3>(m_vecOffsets.rContactFramePosition, m_vecOffsets.rContactFramePosition).diagonal().array().sqrt();
-//     stateStdDev.rContactFrameOrientation =  P.block<3, 3>(m_vecOffsets.rContactFrameOrientation, m_vecOffsets.rContactFrameOrientation).diagonal().array().sqrt();
- 
+    std::size_t dimBias;
+    estimateBias ? dimBias = 0 : dimBias = 6;
+    auto dimSupport = P.cols() - dimBias - extMotionDim;
+
+    auto supportFrameIds = Xk.supportFrameIndices();
+    if (dimSupport != (motionDim*supportFrameIds.size()) )
+    {
+        std::cerr << "[DILIGENT::extractStateVar] support frame dimensions mismatch." << std::endl;
+        return false;
+    }
+
+    int idx = 0;
+    for (auto& frameIdx : supportFrameIds)
+    {
+        int q = extMotionDim + (motionDim*idx);
+        if (frameIdx < landmarkIDsOffset)
+        {
+            stateStdDev.supportFramePose[idx] = P.block<6, 6>(q, q).diagonal().array().sqrt();
+        }
+        else
+        {
+            stateStdDev.landmarkPose[landmarkIDsOffset- idx] = P.block<6, 6>(q, q).diagonal().array().sqrt();
+        }
+        idx++;
+    }
+
     if (estimateBias)
     {
         auto accBiasOffset = P.cols() - accBiasOffsetFromTail;
         auto gyroBiasOffset = P.cols() - gyroBiasOffsetFromTail;
         stateStdDev.accelerometerBias =  P.block<3, 3>(accBiasOffset, accBiasOffset).diagonal().array().sqrt();
-        stateStdDev.gyroscopeBias =  P.block<3, 3>(gyroBiasOffset, gyroBiasOffset).diagonal().array().sqrt();        
+        stateStdDev.gyroscopeBias =  P.block<3, 3>(gyroBiasOffset, gyroBiasOffset).diagonal().array().sqrt();
     }
+
+    return true;
 }
 
-void DILIGENT::Impl::constuctStateVar(const FloatingBaseEstimators::StateStdDev& stateStdDev,
+bool DILIGENT::Impl::constuctStateVar(const FloatingBaseEstimators::InternalState& state,
+                                      const FloatingBaseEstimators::StateStdDev& stateStdDev,
                                       const bool& estimateBias,
                                       Eigen::MatrixXd& P)
 {
-//     if (estimateBias)
-//     {
-//         P.resize(m_vecSizeWBias, m_vecSizeWBias);
-//     }
-//     else
-//     {
-//         P.resize(m_vecSizeWOBias, m_vecSizeWOBias);
-//     }
-// 
-//     P.setZero();
-//     Eigen::Vector3d temp;
-// 
-//     temp = stateStdDev.imuPosition.array().square();
-//     P.block<3, 3>(m_vecOffsets.imuPosition, m_vecOffsets.imuPosition) = temp.asDiagonal();
-//     temp = stateStdDev.imuOrientation.array().square();
-//     P.block<3, 3>(m_vecOffsets.imuOrientation, m_vecOffsets.imuOrientation) = temp.asDiagonal();
-//     temp = stateStdDev.imuLinearVelocity.array().square();
-//     P.block<3, 3>(m_vecOffsets.imuLinearVel, m_vecOffsets.imuLinearVel) = temp.asDiagonal();
-// 
-//     temp = stateStdDev.lContactFramePosition.array().square();
-//     P.block<3, 3>(m_vecOffsets.lContactFramePosition, m_vecOffsets.lContactFramePosition) = temp.asDiagonal();
-//     temp = stateStdDev.lContactFrameOrientation.array().square();
-//     P.block<3, 3>(m_vecOffsets.lContactFrameOrientation, m_vecOffsets.lContactFrameOrientation) = temp.asDiagonal();
-// 
-//     temp = stateStdDev.rContactFramePosition.array().square();
-//     P.block<3, 3>(m_vecOffsets.rContactFramePosition, m_vecOffsets.rContactFramePosition) = temp.asDiagonal();
-//     temp = stateStdDev.rContactFrameOrientation.array().square();
-//     P.block<3, 3>(m_vecOffsets.rContactFrameOrientation, m_vecOffsets.rContactFrameOrientation) = temp.asDiagonal();
-// 
-//     if (estimateBias)
-//     {
-//         temp = stateStdDev.gyroscopeBias.array().square();
-//         P.block<3, 3>(m_vecOffsets.gyroBias, m_vecOffsets.gyroBias) = temp.asDiagonal();
-//         temp = stateStdDev.accelerometerBias.array().square();
-//         P.block<3, 3>(m_vecOffsets.accBias, m_vecOffsets.accBias) = temp.asDiagonal();
-//     }
+    if (!compareKeys(state.supportFrameData, stateStdDev.supportFramePose))
+    {
+        std::cerr << "[DILIGENT::constuctStateVar] support frame data mismatch." << std::endl;
+        return false;
+    }
+
+    if (!compareKeys(state.landmarkData, stateStdDev.landmarkPose))
+    {
+        std::cerr << "[DILIGENT::constuctStateVar] ladmark data mismatch." << std::endl;
+        return false;
+    }
+
+    auto dim = dimensions(state, estimateBias);
+    P.resize(dim, dim);
+    P.setZero();
+    Eigen::Vector3d temp;
+
+    temp = stateStdDev.imuPosition.array().square();
+    P.block<3, 3>(imuPositionOffset, imuPositionOffset) = temp.asDiagonal();
+    temp = stateStdDev.imuOrientation.array().square();
+    P.block<3, 3>(imuOrientationOffset, imuOrientationOffset) = temp.asDiagonal();
+    temp = stateStdDev.imuLinearVelocity.array().square();
+    P.block<3, 3>(imuLinearVelOffset, imuLinearVelOffset) = temp.asDiagonal();
+
+    int idx = 0;
+    Eigen::Matrix<double, 6, 1> frameVar;
+    for (auto& [frameIdx, stddev] : stateStdDev.supportFramePose)
+    {
+        frameVar = stddev.array().square();
+        int q = extMotionDim + (motionDim*idx);
+        P.block<6, 6>(q, q) = frameVar.asDiagonal();
+        idx++;
+    }
+
+    for (auto& [frameIdx, stddev] : stateStdDev.landmarkPose)
+    {
+        frameVar = stddev.array().square();
+        int q = extMotionDim + (motionDim*idx);
+        P.block<6, 6>(q, q) = frameVar.asDiagonal();
+        idx++;
+    }
+
+    if (estimateBias)
+    {
+        Eigen::Matrix<double, 6, 1> biasVar;
+        biasVar << stateStdDev.accelerometerBias.array().square(), stateStdDev.gyroscopeBias.array().square();
+        P.bottomRightCorner<6, 6>() = biasVar.asDiagonal();
+    }
+    return true;
 }
 
 void DILIGENT::Impl::constructStateLieGroup(const FloatingBaseEstimators::InternalState& state,
@@ -694,7 +837,7 @@ void DILIGENT::Impl::constructStateLieGroup(const FloatingBaseEstimators::Intern
     manif::SO3d Rb(state.imuOrientation);
     auto Xb = manif::SE_2_3d(state.imuPosition, Rb, state.imuLinearVelocity);
     G.setBaseExtendedPose(Xb);
-    
+
     G.clearSupportFrames();
     for (auto& [idx, supportFrame] : state.supportFrameData)
     {
@@ -705,7 +848,7 @@ void DILIGENT::Impl::constructStateLieGroup(const FloatingBaseEstimators::Intern
     for (auto& [idx, landmark] : state.landmarkData)
     {
         G.addSupportFramePose(landmarkIDsOffset + idx, landmark.pose);
-    }    
+    }
 
     if (estimateBias)
     {
@@ -733,7 +876,7 @@ bool DILIGENT::Impl::extractStateFromLieGroup(const FloatingBaseExtendedKinemati
                 std::cerr << "[DILIGENT::extractStateFromLieGroup] handling a non-existent support frame." << std::endl;
                 return false;
             }
-            
+
             state.supportFrameData.at(idx).pose = pose;
         }
         else
@@ -744,7 +887,7 @@ bool DILIGENT::Impl::extractStateFromLieGroup(const FloatingBaseExtendedKinemati
                 std::cerr << "[DILIGENT::extractStateFromLieGroup] handling a non-existent landmark." << std::endl;
                 return false;
             }
-            
+
             state.landmarkData.at(ldmkIdx).pose = pose;
         }
     }
@@ -769,7 +912,7 @@ bool DILIGENT::Impl::extractStateFromLieGroup(const FloatingBaseExtendedKinemati
             state.gyroscopeBias = imuBias.tail<3>();
         }
     }
-    
+
     return true;
 }
 
@@ -791,16 +934,16 @@ void DILIGENT::Impl::calcSlantFk(const FloatingBaseEstimators::InternalState& st
     //           [   0     0        0   ...                 0        0]
     // when biases are disabled, ignore last two rows and columns
     // the dots are filled with zeros depending on the number of support frame and landmarks
-        
+
     slantFk.resize(dim, dim);
     slantFk.setZero();
- 
+
     Eigen::Matrix3d RT = state.imuOrientation.toRotationMatrix();
     const Eigen::Vector3d& v = state.imuLinearVelocity;
 
     Eigen::Vector3d a = RT*v*dt + RT*g*0.5*dt*dt;
-    Eigen::Matrix3d aCross = iDynTree::skew(a);
-    Eigen::Matrix3d gCross = iDynTree::skew(RT*g*dt);
+    Eigen::Matrix3d aCross = manif::skew(a);
+    Eigen::Matrix3d gCross = manif::skew(RT*g*dt);
 
     slantFk.block<3, 3>(imuPositionOffset, imuOrientationOffset) = aCross;
     slantFk.block<3, 3>(imuPositionOffset, imuLinearVelOffset) = I3*dt;
@@ -836,13 +979,13 @@ void DILIGENT::Impl::calcQk(const FloatingBaseEstimators::SensorsStdDev& sensStd
     Qk.block<3, 3>(imuPositionOffset, imuPositionOffset) = 0.5*dt*dt*static_cast<Eigen::Matrix3d>(Qa.asDiagonal());
     Qk.block<3, 3>(imuOrientationOffset, imuOrientationOffset) = dt*static_cast<Eigen::Matrix3d>(Qg.asDiagonal());
     Qk.block<3, 3>(imuLinearVelOffset, imuLinearVelOffset) = dt*static_cast<Eigen::Matrix3d>(Qa.asDiagonal());
-    
+
     Eigen::Matrix<double, 6, 1> Qf;
     Eigen::Matrix<double, 6, 1> supportFrameNoise;
-    
+
     // get sorted list of indices
     auto supportFrameIds = Omegak.supportFrameIndices();
-    
+
     int idx = 0;
     for (auto& frameIdx : supportFrameIds)
     {
@@ -862,14 +1005,14 @@ void DILIGENT::Impl::calcQk(const FloatingBaseEstimators::SensorsStdDev& sensStd
         {
             supportFrameNoise << sensStdDev.landmarkPredictionNoise;
         }
-        
+
         Qf = supportFrameNoise.array().square();
-        
+
         int q = extMotionDim + (motionDim*idx);
         Qk.block<6, 6>(q, q) = dt*static_cast<Eigen::Matrix<double, 6, 6> >(Qf.asDiagonal());
         idx++;
     }
-    
+
     if (estimateBias)
     {
         auto accBiasOffset = dim - accBiasOffsetFromTail;
@@ -877,7 +1020,7 @@ void DILIGENT::Impl::calcQk(const FloatingBaseEstimators::SensorsStdDev& sensStd
         Eigen::Vector3d Qba = sensStdDev.accelerometerBiasNoise.array().square();
         Eigen::Vector3d Qbg = sensStdDev.gyroscopeBiasNoise.array().square();
         Qk.block<3, 3>(accBiasOffset, accBiasOffset) = dt*static_cast<Eigen::Matrix3d>(Qba.asDiagonal());
-        Qk.block<3, 3>(gyroBiasOffset, gyroBiasOffset) = dt*static_cast<Eigen::Matrix3d>(Qbg.asDiagonal());        
+        Qk.block<3, 3>(gyroBiasOffset, gyroBiasOffset) = dt*static_cast<Eigen::Matrix3d>(Qbg.asDiagonal());
     }
 }
 
@@ -901,18 +1044,18 @@ void DILIGENT::Impl::calcOmegak(const FloatingBaseEstimators::InternalState& X,
     // when biases are disabled, last six rows are omitted
     // w = y_gyro - b_gyro
     // a = y_acc - b_acc + R.T g
-    
+
     Eigen::Matrix3d RT = X.imuOrientation.toRotationMatrix().transpose();
     Eigen::Vector3d w = meas.gyro - X.gyroscopeBias;
     Eigen::Vector3d a = meas.acc - X.accelerometerBias + (RT * g);
     const Eigen::Vector3d& v = X.imuLinearVelocity;
-    
+
     Eigen::VectorXd vBase(9);
     vBase << (RT*v*dt) + (a*0.5*dt*dt), w*dt, a*dt;
     auto baseMotion = manif::SE_2_3Tangentd(vBase);
     Omegak.setBaseExtendedMotionVector(baseMotion);
 
-    std::map<int, manif::SE3Tangentd> supportFrameMap;    
+    std::map<int, manif::SE3Tangentd> supportFrameMap;
 
     Omegak.clearSupportFrames();
     // positive ids for contacts
@@ -925,11 +1068,270 @@ void DILIGENT::Impl::calcOmegak(const FloatingBaseEstimators::InternalState& X,
     for (auto& iter : X.landmarkData)
     {
         Omegak.addSupportFrameTwist(landmarkIDsOffset + iter.first, zeroTwist);
-    }    
+    }
 
     if (estimateBias)
     {
         Eigen::VectorXd vBias = Eigen::VectorXd::Zero(6);
         Omegak.setAugmentedVector(vBias);
     }
+}
+
+
+bool DILIGENT::Impl::vec2Tangent(const Eigen::VectorXd& v,
+                                 const std::vector<int>& ids,
+                                 const bool& estimateBias,
+                                 FloatingBaseExtendedKinematicsLieGroupTangent& tangent)
+{
+    auto vecSize = v.size();
+    if (vecSize < extMotionDim)
+    {
+        std::cerr << "[DILIGENT::vecToTangent] vector size must be atleast 9" << std::endl;
+        return false;
+    }
+
+    std::size_t dimBias;
+    estimateBias ? dimBias = 0 : dimBias = 6;
+    auto dimSupport = vecSize - dimBias - extMotionDim;
+
+    if ( ((vecSize - extMotionDim) % 6) != 0 || dimSupport / 6 != ids.size())
+    {
+        std::cerr << "[DILIGENT::vecToTangent] vector size mismatch" << std::endl;
+        return false;
+    }
+
+    tangent.setBaseExtendedMotionVector(v.head(extMotionDim));
+
+    int idx = 0;
+    for (auto& id : ids)
+    {
+        int q = extMotionDim + (motionDim*idx);
+        tangent.addSupportFrameTwist(id, v.segment<6>(q));
+        idx++;
+    }
+
+    if (estimateBias)
+    {
+        Omegak.setAugmentedVector(v.tail(dimBias));
+    }
+
+    return true;
+}
+
+bool DILIGENT::Impl::addContactOrLandmark(const int& idx,
+                                          const double& time,
+                                          const bool& isActive,
+                                          const manif::SE3d& poseEstimate,
+                                          const FloatingBaseEstimators::SensorsStdDev& sensStdDev,
+                                          const double& dt,
+                                          const bool& estimateBias,
+                                          FloatingBaseEstimators::InternalState& state,
+                                          Eigen::MatrixXd& P)
+{
+    Eigen::Matrix<double, 6, 1> Qf;
+    Eigen::Matrix<double, 6, 1> supportFrameNoise;
+    int oldCols = P.cols();
+    int newRows = P.rows() + motionDim;
+    int newCols = P.cols() + motionDim;
+    Eigen::MatrixXd Fnew = Eigen::MatrixXd::Zero(newRows, oldCols);
+    Fnew.topLeftCorner(extMotionDim, extMotionDim).setIdentity();
+    Eigen::MatrixXd Qnew = Eigen::MatrixXd::Zero(newRows, newCols);
+    if (idx < landmarkIDsOffset)
+    {
+        // add contact
+        if (state.supportFrameData.find(idx) != state.supportFrameData.end())
+        {
+            std::cerr << "[DILIGENT::addContactOrLandmark] contact already exists" << std::endl;
+            return false;
+        }
+
+        BipedalLocomotion::Contacts::EstimatedContact newContact;
+        newContact.index = idx;
+        newContact.name = "Contact#" + std::to_string(idx);
+        newContact.lastUpdateTime = time;
+        newContact.pose = poseEstimate;
+        newContact.isActive = isActive;
+        state.supportFrameData[idx] = newContact;
+
+        if (isActive)
+        {
+            supportFrameNoise << sensStdDev.contactFootLinvelNoise, sensStdDev.contactFootAngvelNoise;
+        }
+        else
+        {
+            supportFrameNoise << sensStdDev.swingFootLinvelNoise, sensStdDev.swingFootAngvelNoise;
+        }
+
+        int j = 0;
+        for (auto& iter : state.supportFrameData)
+        {
+            int q = extMotionDim + (j*motionDim);
+            if (iter.first < idx)
+            {
+                Fnew.block<6, 6>(q, q).setIdentity();
+            }
+            else if (iter.first == idx)
+            {
+                Qf = supportFrameNoise.array().square();
+                Qnew.block<6, 6>(q, q) = dt*static_cast<Eigen::Matrix<double, 6, 6> >(Qf.asDiagonal());
+            }
+            else if (iter.first > idx)
+            {
+                Fnew.block<6, 6>(q+motionDim, q).setIdentity();
+            }
+            j++;
+        }
+
+        for (auto& iter : state.landmarkData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            Fnew.block<6, 6>(q+motionDim, q).setIdentity();
+            j++;
+        }
+    }
+    else
+    {
+        // add landmark
+        int ldmkIdx = landmarkIDsOffset - idx;
+        if (state.landmarkData.find(ldmkIdx) != state.landmarkData.end())
+        {
+            std::cerr << "[DILIGENT::addContactOrLandmark] landmark already exists" << std::endl;
+            return false;
+        }
+
+        BipedalLocomotion::Contacts::EstimatedLandmark newLdmk;
+        newLdmk.index = ldmkIdx;
+        newLdmk.name = "Landmark#" + std::to_string(ldmkIdx);
+        newLdmk.lastUpdateTime = time;
+        newLdmk.pose = poseEstimate;
+        newLdmk.isActive = true;
+        state.landmarkData[ldmkIdx] = newLdmk;
+
+        supportFrameNoise << sensStdDev.landmarkPredictionNoise;
+
+        int j = 0;
+        for (auto& iter : state.supportFrameData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            Fnew.block<6, 6>(q, q).setIdentity();
+            j++;
+        }
+
+        for (auto& iter : state.landmarkData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            if (iter.first < ldmkIdx)
+            {
+                Fnew.block<6, 6>(q, q).setIdentity();
+            }
+            else if (iter.first == ldmkIdx)
+            {
+                Qf = supportFrameNoise.array().square();
+                Qnew.block<6, 6>(q, q) = dt*static_cast<Eigen::Matrix<double, 6, 6> >(Qf.asDiagonal());
+            }
+            if (iter.first > ldmkIdx)
+            {
+                Fnew.block<6, 6>(q+motionDim, q).setIdentity();
+            }
+            j++;
+        }
+    }
+
+    if (estimateBias)
+    {
+        Fnew.bottomRightCorner<6, 6>().setIdentity();
+    }
+    // update covariance
+    P = Fnew * P * Fnew.transpose() + Qnew;
+
+    return true;
+}
+
+bool DILIGENT::Impl::removeContactOrLandmark(const int& idx,
+                                             const bool& estimateBias,
+                                             FloatingBaseEstimators::InternalState& state,
+                                             Eigen::MatrixXd& P)
+{
+    int oldCols = P.cols();
+    int newRows = P.rows() - motionDim;
+
+    Eigen::MatrixXd Fnew = Eigen::MatrixXd::Zero(newRows, oldCols);
+    Fnew.topLeftCorner(extMotionDim, extMotionDim).setIdentity();
+
+    if (idx < landmarkIDsOffset)
+    {
+        // remove contact
+        if (state.supportFrameData.find(idx) == state.supportFrameData.end())
+        {
+            std::cerr << "[DILIGENT::removeContactOrLandmark] contact does not exist" << std::endl;
+            return false;
+        }
+
+        int j = 0;
+        for (auto& iter : state.supportFrameData)
+        {
+            int q = extMotionDim + (j*motionDim);
+            if (iter.first < idx)
+            {
+                Fnew.block<6, 6>(q, q).setIdentity();
+            }
+            else if (iter.first > idx)
+            {
+                Fnew.block<6, 6>(q-motionDim, q).setIdentity();
+            }
+            j++;
+        }
+
+        for (auto& iter : state.landmarkData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            Fnew.block<6, 6>(q-motionDim, q).setIdentity();
+            j++;
+        }
+
+        state.supportFrameData.erase(idx);
+    }
+    else
+    {
+        // remove landmark
+        int ldmkIdx = landmarkIDsOffset - idx;
+        if (state.landmarkData.find(ldmkIdx) == state.landmarkData.end())
+        {
+            std::cerr << "[DILIGENT::removeContactOrLandmark] landmark does not exist" << std::endl;
+            return false;
+        }
+
+        int j = 0;
+        for (auto& iter : state.supportFrameData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            Fnew.block<6, 6>(q, q).setIdentity();
+            j++;
+        }
+
+        for (auto& iter : state.landmarkData)
+        {
+            int q = extMotionDim  + (j*motionDim);
+            if (iter.first < ldmkIdx)
+            {
+                Fnew.block<6, 6>(q, q).setIdentity();
+            }
+            else  if (iter.first > ldmkIdx)
+            {
+                Fnew.block<6, 6>(q-motionDim, q).setIdentity();
+            }
+            j++;
+        }
+
+        state.landmarkData.erase(ldmkIdx);
+    }
+
+    if (estimateBias)
+    {
+        Fnew.bottomRightCorner<6, 6>().setIdentity();
+    }
+
+    // update covariance
+    P = Fnew * P * Fnew.transpose();
+    return true;
 }

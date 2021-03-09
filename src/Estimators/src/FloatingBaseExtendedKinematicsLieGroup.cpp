@@ -362,6 +362,11 @@ bool FloatingBaseExtendedKinematicsLieGroup::isAugmentedVectorUsed() const
     return m_pimpl->isAugmentedVectorUsed;
 }
 
+std::size_t FloatingBaseExtendedKinematicsLieGroup::dimensions() const
+{
+    return m_pimpl->extPoseDim + (m_pimpl->poseDim* nrOfSupportFrames()) + m_pimpl->augmentedVector.size();
+}
+
 bool FloatingBaseExtendedKinematicsLieGroup::augmentedVector(Eigen::VectorXd& augVec) const
 {
     std::string_view printPrefix{"[FloatingBaseExtendedKinematicsLieGroup::augmentedVector] "};

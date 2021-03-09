@@ -166,6 +166,8 @@ namespace Estimators
  
         void setAugmentedVector(Eigen::Ref<const Eigen::VectorXd> augVec); /**< set augmented vector from the  group*/
 
+    std::size_t dimensions() const;
+
     private:
         class Impl;
         std::unique_ptr<Impl> m_pimpl;
