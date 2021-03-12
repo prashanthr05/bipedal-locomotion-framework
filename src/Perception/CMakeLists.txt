@@ -9,5 +9,12 @@ if(FRAMEWORK_COMPILE_Perception AND FRAMEWORK_COMPILE_RealsenseCapture)
     SOURCES                src/RealSense.cpp
     PUBLIC_HEADERS         ${H_PREFIX}/RealSense.h
     PUBLIC_LINK_LIBRARIES  BipedalLocomotion::ParametersHandler BipedalLocomotion::TextLogging BipedalLocomotion::PerceptionInterface ${realsense2_LIBRARY})
+
+    set(H_PREFIX include/BipedalLocomotion/Perception/Features)
+    add_bipedal_locomotion_library(
+      NAME                   PerceptionFeatures
+      IS_INTERFACE
+      PUBLIC_HEADERS         ${H_PREFIX}/PointCloudProcessor.h
+      PUBLIC_LINK_LIBRARIES  BipedalLocomotion::ParametersHandler BipedalLocomotion::TextLogging ${PCL_LIBRARIES} Eigen3::Eigen)
 endif()
 
