@@ -349,8 +349,6 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
         return false;
     }
 
-    std::cout << m_pimpl->Qk << std::endl;
-
     m_pimpl->m_P = m_pimpl->Fk*m_pimpl->m_P*(m_pimpl->Fk.transpose()) +
                    m_pimpl->Jr*(m_pimpl->Qk*dt)*(m_pimpl->Jr.transpose());
 
@@ -392,14 +390,14 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
         m_pimpl->existingContact.push_back(iter.first);
     }
 
-    std::vector<manif::SE3d> measPoses;
+    std::unordered_map<int, manif::SE3d> measPoses;
     size_t nrContacts{0};
     // first iterate through measurement and add new contacts
     for (auto& iter : meas.stampedContactsStatus)
     {
         auto contactid = iter.first;
         auto relContactPose = Conversions::toManifPose(m_modelComp.kinDyn()->getRelativeTransform(m_modelComp.baseIMUIdx(), contactid));
-        measPoses.push_back(relContactPose);
+        measPoses[contactid] = relContactPose;
         auto contactData = iter.second;
         bool isActive{contactData.isActive};
         auto timestamp = contactData.lastUpdateTime;
@@ -480,7 +478,7 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
                 Eigen::Vector3d d = m_state.supportFrameData.at(iter.first).pose.translation();
 
                 auto hOfX = Conversions::toManifPose(R.transpose()*Z, R.transpose()*(d - p));
-                auto& y = measPoses[k];
+                auto& y = measPoses.at(contactId);
 
                 // innovation
                 auto poseError = y - hOfX;  // this performs logvee_SE3(inv(hOfX), y)
@@ -511,12 +509,12 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
         }
     }
 
-    // discretize the measurement noise covariance
-    m_pimpl->N /= dt;
-
     // update state and covariance and clear used measurements
     if (nrContacts > 0)
     {
+        // discretize the measurement noise covariance
+        m_pimpl->N /= dt;
+
         meas.stampedContactsStatus.clear();
         if (!m_pimpl->updateStates(m_pimpl->deltaY, m_pimpl->H, m_pimpl->N,
                                    m_options.imuBiasEstimationEnabled, m_pimpl->Xk,
@@ -632,12 +630,12 @@ bool DILIGENT::updateLandmarkRelativePoses(FloatingBaseEstimators::Measurements&
         k++;
     }
 
-    // discretize the measurement noise covariance
-    m_pimpl->N /= dt;
-
     // update state and covariance and clear used measurements
     if (meas.stampedRelLandmarkPoses.size() > 0)
     {
+        // discretize the measurement noise covariance
+        m_pimpl->N /= dt;
+
         meas.stampedRelLandmarkPoses.clear();
         if (!m_pimpl->updateStates(m_pimpl->deltaY, m_pimpl->H, m_pimpl->N,
                                    m_options.imuBiasEstimationEnabled, m_pimpl->Xk,
@@ -1071,9 +1069,6 @@ void DILIGENT::Impl::calcOmegak(const FloatingBaseEstimators::InternalState& X,
     auto baseMotion = manif::SE_2_3Tangentd(vBase);
     Omegak.setBaseExtendedMotionVector(baseMotion);
 
-    std::map<int, manif::SE3Tangentd> supportFrameMap;
-
-    Omegak.clearSupportFrames();
     // positive ids for contacts
     for (auto& iter : X.supportFrameData)
     {
@@ -1102,8 +1097,9 @@ void DILIGENT::Impl::calcOmegak(const FloatingBaseEstimators::InternalState& X,
 
     if (estimateBias)
     {
-        Eigen::VectorXd vBias = Eigen::VectorXd::Zero(6);
-        Omegak.setAugmentedVector(vBias);
+        // technically not a zero twist
+        // neverthelss an existing store of 6 zeros
+        Omegak.setAugmentedVector(zeroTwist.coeffs());
     }
 }
 

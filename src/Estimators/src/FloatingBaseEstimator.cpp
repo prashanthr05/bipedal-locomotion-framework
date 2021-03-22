@@ -230,6 +230,7 @@ bool FloatingBaseEstimator::ModelComputations::setBaseLinkAndIMU(const std::stri
     m_baseLink = baseLink;
     m_baseImuFrame = imuFrame;
     m_base_H_imu = Conversions::toManifPose(m_kindyn->model().getFrameTransform(m_baseImuIdx));
+
     return true;
 }
 
