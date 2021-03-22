@@ -349,6 +349,8 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
         return false;
     }
 
+    std::cout << m_pimpl->Qk << std::endl;
+
     m_pimpl->m_P = m_pimpl->Fk*m_pimpl->m_P*(m_pimpl->Fk.transpose()) +
                    m_pimpl->Jr*(m_pimpl->Qk*dt)*(m_pimpl->Jr.transpose());
 
@@ -367,24 +369,16 @@ bool DILIGENT::predictState(const FloatingBaseEstimators::Measurements& meas,
 bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
                                 const double& dt)
 {
+    if (meas.stampedContactsStatus.size() < 1)
+    {
+        // early return, nothing to do if no measurements available
+        return false;
+    }
+
     // extract current predicted state
     Eigen::Matrix3d R = m_state.imuOrientation.toRotationMatrix();
     const Eigen::Vector3d& p = m_state.imuPosition;
     manif::SE3d imuPosePred = Conversions::toManifPose(R, p);
-
-    if ( (meas.encoders.size() != m_modelComp.nrJoints()) ||
-         (meas.encodersSpeed.size() != m_modelComp.nrJoints()) ||
-         (m_sensorsDev.encodersNoise.size() != m_modelComp.nrJoints()) )
-    {
-        std::cerr << "[DILIGENT::updateKinematics] encoder measurement and noise parameter size mismatch." << std::endl;
-        return false;
-    }
-
-    if (!m_modelComp.kinDyn()->setJointPos(iDynTree::make_span(meas.encoders.data(), meas.encoders.size())))
-    {
-        std::cerr << "[DILIGENT::updateKinematics] unable to set joint positions." << std::endl;
-        return false;
-    }
 
     Eigen::VectorXd encodersVar = m_sensorsDev.encodersNoise.array().square();
     Eigen::MatrixXd Renc = static_cast<Eigen::MatrixXd>(encodersVar.asDiagonal());
@@ -399,20 +393,20 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
     }
 
     std::vector<manif::SE3d> measPoses;
+    size_t nrContacts{0};
     // first iterate through measurement and add new contacts
     for (auto& iter : meas.stampedContactsStatus)
     {
         auto contactid = iter.first;
         auto relContactPose = Conversions::toManifPose(m_modelComp.kinDyn()->getRelativeTransform(m_modelComp.baseIMUIdx(), contactid));
         measPoses.push_back(relContactPose);
+        auto contactData = iter.second;
+        bool isActive{contactData.isActive};
+        auto timestamp = contactData.lastUpdateTime;
 
         if (std::find(m_pimpl->existingContact.begin(), m_pimpl->existingContact.end(),
             iter.first) == m_pimpl->existingContact.end())
         {
-            auto contactData = iter.second;
-            auto timestamp = contactData.lastUpdateTime;
-            bool isActive{contactData.isActive};
-
             if (!m_pimpl->addContactOrLandmark(contactid, timestamp, isActive,
                                                imuPosePred*relContactPose,
                                                m_sensorsDev, m_dt,
@@ -422,7 +416,20 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
                 continue;
             }
         }
+        else
+        {
+            m_state.supportFrameData.at(contactid).isActive = isActive;
+            m_state.supportFrameData.at(contactid).lastUpdateTime = timestamp;
+        }
+
+        if (isActive)
+        {
+            nrContacts++;
+        }
     }
+
+    // update the underlying matrix Lie group from the state
+    m_pimpl->constructStateLieGroup(m_state, m_options.imuBiasEstimationEnabled, m_pimpl->Xk);
 
     // construct stack sub H and sub deltaY
     // construct blkdiag of sub N
@@ -449,7 +456,7 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
     //
     // For multiple contacts, the H matrices are stacked and N matrices are block diagonalized
     const int stateSpaceDims = m_pimpl->dimensions(m_state, m_options.imuBiasEstimationEnabled);
-    const int measurementSpaceDims = meas.stampedRelLandmarkPoses.size()*m_pimpl->motionDim;
+    const int measurementSpaceDims = nrContacts*m_pimpl->motionDim;
     m_pimpl->H.resize(measurementSpaceDims, stateSpaceDims);
     m_pimpl->H.setZero();
     m_pimpl->N.resize(measurementSpaceDims, measurementSpaceDims);
@@ -494,19 +501,21 @@ bool DILIGENT::updateKinematics(FloatingBaseEstimators::Measurements& meas,
 
                 m_pimpl->H.block<6, 6>(contactOffsetMeas, m_pimpl->imuPositionOffset) = jacIMU;
                 m_pimpl->H.block<6, 6>(contactOffsetMeas, contactOffsetState).setIdentity();
+
+                // only if active contact
+                // increase k count
+                k++;
                 break;
             }
             j++;
         }
-
-        k++;
     }
 
     // discretize the measurement noise covariance
     m_pimpl->N /= dt;
 
     // update state and covariance and clear used measurements
-    if (meas.stampedContactsStatus.size() > 0)
+    if (nrContacts > 0)
     {
         meas.stampedContactsStatus.clear();
         if (!m_pimpl->updateStates(m_pimpl->deltaY, m_pimpl->H, m_pimpl->N,
@@ -841,8 +850,8 @@ void DILIGENT::Impl::constructStateLieGroup(const FloatingBaseEstimators::Intern
                                             const bool& estimateBias,
                                             FloatingBaseExtendedKinematicsLieGroup& G)
 {
-    manif::SO3d Rb(state.imuOrientation);
-    auto Xb = manif::SE_2_3d(state.imuPosition, Rb, state.imuLinearVelocity);
+    auto Hb = toManifPose(state.imuOrientation.toRotationMatrix(), state.imuPosition);
+    auto Xb = manif::SE_2_3d(Hb.isometry(), state.imuLinearVelocity);
     G.setBaseExtendedPose(Xb);
 
     G.clearSupportFrames();
