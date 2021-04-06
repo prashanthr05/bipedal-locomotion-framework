@@ -63,7 +63,7 @@ public:
     /**
      * Perform the Kalman filter update step given measurements and Jacobians
      */
-    bool updateStates(const Eigen::VectorXd& deltaY, const Eigen::MatrixXd H,
+    bool updateStates(const Eigen::VectorXd& deltaY, const Eigen::MatrixXd& H,
                       const Eigen::MatrixXd& N, const bool& estimateBias,
                       FloatingBaseExtendedKinematicsLieGroup& Xk,
                       FloatingBaseEstimators::InternalState& state,
@@ -690,7 +690,7 @@ bool DILIGENT::Impl::propagateStates(FloatingBaseExtendedKinematicsLieGroup& Xk,
 }
 
 bool DILIGENT::Impl::updateStates(const Eigen::VectorXd& deltaY,
-                                  const Eigen::MatrixXd Hk,
+                                  const Eigen::MatrixXd& Hk,
                                   const Eigen::MatrixXd& Nk,
                                   const bool& estimateBias,
                                   FloatingBaseExtendedKinematicsLieGroup& Xk,
