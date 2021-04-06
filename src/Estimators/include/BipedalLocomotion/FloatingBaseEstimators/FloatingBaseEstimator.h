@@ -406,6 +406,7 @@ protected:
     bool m_useIMUVelForBaseVelComputation{true}; /**< Compute base velocity using inertnal state IMU velocity. by default set to true for strap down IMU based EKF implementations, if IMU measurements not used, corresponding impl can set to false */
     bool m_useModelInfo{true}; /**< Flag to enable running the estimator without using the URDF model information*/
     bool m_isInvEKF{false}; /**< Flag to maintain soon to be deprecated functionalities currently existing only in InvEKFBaseEstimator */
+    bool m_useIMU{true};
 private:
     /**
     * Setup model related parameters

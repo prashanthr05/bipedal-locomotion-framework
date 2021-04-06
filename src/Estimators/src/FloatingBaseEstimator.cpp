@@ -574,11 +574,17 @@ bool FloatingBaseEstimator::setupSensorDevs(std::weak_ptr<BipedalLocomotion::Par
 
     std::string printPrefix{"setupSensorDevs"};
 
-    std::vector<double> accNoise(3);
-    if (!setupFixedVectorParamPrivate("accelerometer_measurement_noise_std_dev", printPrefix, handler, accNoise)) { return false; }
+    if (m_useIMU)
+    {
+        std::vector<double> accNoise(3);
+        if (!setupFixedVectorParamPrivate("accelerometer_measurement_noise_std_dev", printPrefix, handler, accNoise)) { return false; }
 
-    std::vector<double> gyroNoise(3);
-    if (!setupFixedVectorParamPrivate("gyroscope_measurement_noise_std_dev", printPrefix, handler, gyroNoise)) { return false; }
+        std::vector<double> gyroNoise(3);
+        if (!setupFixedVectorParamPrivate("gyroscope_measurement_noise_std_dev", printPrefix, handler, gyroNoise)) { return false; }
+
+        m_sensorsDev.accelerometerNoise << accNoise[0], accNoise[1], accNoise[2];
+        m_sensorsDev.gyroscopeNoise << gyroNoise[0], gyroNoise[1], gyroNoise[2];
+    }
 
     if (m_useModelInfo)
     {
@@ -624,9 +630,6 @@ bool FloatingBaseEstimator::setupSensorDevs(std::weak_ptr<BipedalLocomotion::Par
         m_sensorsDev.accelerometerBiasNoise << accBiasNoise[0], accBiasNoise[1], accBiasNoise[2];
         m_sensorsDev.gyroscopeBiasNoise << gyroBiasNoise[0], gyroBiasNoise[1], gyroBiasNoise[2];
     }
-
-    m_sensorsDev.accelerometerNoise << accNoise[0], accNoise[1], accNoise[2];
-    m_sensorsDev.gyroscopeNoise << gyroNoise[0], gyroNoise[1], gyroNoise[2];
 
     if (m_options.staticLandmarksUpdateEnabled)
     {
