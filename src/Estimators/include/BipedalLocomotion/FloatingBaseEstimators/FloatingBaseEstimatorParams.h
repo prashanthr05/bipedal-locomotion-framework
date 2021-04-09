@@ -231,18 +231,6 @@ struct Options
      */
     bool staticLandmarksUpdateEnabled{true};
 
-
-    /**
-     * @brief Enable/disable kinematics based correction updates
-     */
-    bool kinematicsUpdateEnabled{true};
-
-    /**
-     * @brief Enable/disable landmarks based correction updates
-     */
-    bool staticLandmarksUpdateEnabled{false};
-
-
     /**
     * @brief Acceleration vector due to gravity
     *

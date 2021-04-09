@@ -106,8 +106,8 @@ public:
         return dim;
     }
 
-    template <typename T, typename V>
-    bool compareKeys(const std::map<int, T>& lhs, const std::map<int, V>& rhs)
+    bool compareKeys(const std::map<int, BipedalLocomotion::Contacts::EstimatedContact>& lhs,
+                     const FloatingBaseEstimators::PoseCovariance& rhs)
     {
         return (lhs.size() == rhs.size()) &&
                (std::equal(lhs.begin(), lhs.end(), rhs.begin(),
