@@ -572,6 +572,18 @@ bool FloatingBaseEstimator::setupSensorDevs(std::weak_ptr<BipedalLocomotion::Par
 
         m_sensorsDev.accelerometerNoise << accNoise[0], accNoise[1], accNoise[2];
         m_sensorsDev.gyroscopeNoise << gyroNoise[0], gyroNoise[1], gyroNoise[2];
+
+        if (m_options.imuBiasEstimationEnabled)
+        {
+            std::vector<double> accBiasNoise(3);
+            if (!setupFixedVectorParamPrivate("accelerometer_measurement_bias_noise_std_dev", printPrefix, handler, accBiasNoise)) { return false; }
+
+            std::vector<double> gyroBiasNoise(3);
+            if (!setupFixedVectorParamPrivate("gyroscope_measurement_bias_noise_std_dev", printPrefix, handler, gyroBiasNoise)) { return false; }
+
+            m_sensorsDev.accelerometerBiasNoise << accBiasNoise[0], accBiasNoise[1], accBiasNoise[2];
+            m_sensorsDev.gyroscopeBiasNoise << gyroBiasNoise[0], gyroBiasNoise[1], gyroBiasNoise[2];
+        }
     }
 
     if (m_useModelInfo)
@@ -605,18 +617,6 @@ bool FloatingBaseEstimator::setupSensorDevs(std::weak_ptr<BipedalLocomotion::Par
 
         m_sensorsDev.encodersNoise.resize(encodersNoise.size());
         m_sensorsDev.encodersNoise = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(encodersNoise.data(), encodersNoise.size());
-    }
-
-    if (m_options.imuBiasEstimationEnabled)
-    {
-        std::vector<double> accBiasNoise(3);
-        if (!setupFixedVectorParamPrivate("accelerometer_measurement_bias_noise_std_dev", printPrefix, handler, accBiasNoise)) { return false; }
-
-        std::vector<double> gyroBiasNoise(3);
-        if (!setupFixedVectorParamPrivate("gyroscope_measurement_bias_noise_std_dev", printPrefix, handler, gyroBiasNoise)) { return false; }
-
-        m_sensorsDev.accelerometerBiasNoise << accBiasNoise[0], accBiasNoise[1], accBiasNoise[2];
-        m_sensorsDev.gyroscopeBiasNoise << gyroBiasNoise[0], gyroBiasNoise[1], gyroBiasNoise[2];
     }
 
     if (m_options.staticLandmarksUpdateEnabled)
@@ -805,6 +805,7 @@ bool FloatingBaseEstimator::updateBaseStateFromIMUState(const FloatingBaseEstima
     Eigen::Matrix<double, 6, 1> v_IMU;
 
     v_IMU.head<3>() = state.imuLinearVelocity;
+
     if (m_useIMUForAngVelEstimate)
     {
         v_IMU.tail<3>() = state.imuOrientation.toRotationMatrix()*(meas.gyro - state.gyroscopeBias);
